@@ -16,10 +16,11 @@
 package com.google.android.exoplayer2.source.hls.playlist;
 
 import android.net.Uri;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
-import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist.HlsUrl;
+import com.google.android.exoplayer2.source.hls.HlsDataSourceFactory;
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import java.io.IOException;
 
 /**
@@ -28,13 +29,29 @@ import java.io.IOException;
  * <p>The playlist tracker is responsible for exposing the seeking window, which is defined by the
  * segments that one of the playlists exposes. This playlist is called primary and needs to be
  * periodically refreshed in the case of live streams. Note that the primary playlist is one of the
- * media playlists while the master playlist is an optional kind of playlist defined by the HLS
- * specification (RFC 8216).
+ * media playlists while the multivariant playlist is an optional kind of playlist defined by the
+ * HLS specification (RFC 8216).
  *
- * <p>Playlist loads might encounter errors. The tracker may choose to blacklist them to ensure a
+ * <p>Playlist loads might encounter errors. The tracker may choose to exclude them to ensure a
  * primary playlist is always available.
  */
 public interface HlsPlaylistTracker {
+
+  /** Factory for {@link HlsPlaylistTracker} instances. */
+  interface Factory {
+
+    /**
+     * Creates a new tracker instance.
+     *
+     * @param dataSourceFactory The {@link HlsDataSourceFactory} to use for playlist loading.
+     * @param loadErrorHandlingPolicy The {@link LoadErrorHandlingPolicy} for playlist load errors.
+     * @param playlistParserFactory The {@link HlsPlaylistParserFactory} for playlist parsing.
+     */
+    HlsPlaylistTracker createTracker(
+        HlsDataSourceFactory dataSourceFactory,
+        LoadErrorHandlingPolicy loadErrorHandlingPolicy,
+        HlsPlaylistParserFactory playlistParserFactory);
+  }
 
   /** Listener for primary playlist changes. */
   interface PrimaryPlaylistListener {
@@ -50,33 +67,33 @@ public interface HlsPlaylistTracker {
   /** Called on playlist loading events. */
   interface PlaylistEventListener {
 
-    /**
-     * Called a playlist changes.
-     */
+    /** Called a playlist changes. */
     void onPlaylistChanged();
 
     /**
      * Called if an error is encountered while loading a playlist.
      *
      * @param url The loaded url that caused the error.
-     * @param shouldBlacklist Whether the playlist should be blacklisted.
-     * @return True if blacklisting did not encounter errors. False otherwise.
+     * @param loadErrorInfo The load error info.
+     * @param forceRetry Whether retry should be forced without considering exclusion.
+     * @return True if excluding did not encounter errors. False otherwise.
      */
-    boolean onPlaylistError(HlsUrl url, boolean shouldBlacklist);
+    boolean onPlaylistError(
+        Uri url, LoadErrorHandlingPolicy.LoadErrorInfo loadErrorInfo, boolean forceRetry);
   }
 
   /** Thrown when a playlist is considered to be stuck due to a server side error. */
   final class PlaylistStuckException extends IOException {
 
     /** The url of the stuck playlist. */
-    public final String url;
+    public final Uri url;
 
     /**
      * Creates an instance.
      *
      * @param url See {@link #url}.
      */
-    public PlaylistStuckException(String url) {
+    public PlaylistStuckException(Uri url) {
       this.url = url;
     }
   }
@@ -85,14 +102,14 @@ public interface HlsPlaylistTracker {
   final class PlaylistResetException extends IOException {
 
     /** The url of the reset playlist. */
-    public final String url;
+    public final Uri url;
 
     /**
      * Creates an instance.
      *
      * @param url See {@link #url}.
      */
-    public PlaylistResetException(String url) {
+    public PlaylistResetException(Uri url) {
       this.url = url;
     }
   }
@@ -100,19 +117,25 @@ public interface HlsPlaylistTracker {
   /**
    * Starts the playlist tracker.
    *
-   * <p>Must be called from the playback thread. A tracker may be restarted after a {@link
-   * #release()} call.
+   * <p>Must be called from the playback thread. A tracker may be restarted after a {@link #stop()}
+   * call.
    *
-   * @param initialPlaylistUri Uri of the HLS stream. Can point to a media playlist or a master
-   *     playlist.
+   * @param initialPlaylistUri Uri of the HLS stream. Can point to a media playlist or a
+   *     multivariant playlist.
    * @param eventDispatcher A dispatcher to notify of events.
-   * @param listener A callback for the primary playlist change events.
+   * @param primaryPlaylistListener A callback for the primary playlist change events.
    */
   void start(
-      Uri initialPlaylistUri, EventDispatcher eventDispatcher, PrimaryPlaylistListener listener);
+      Uri initialPlaylistUri,
+      EventDispatcher eventDispatcher,
+      PrimaryPlaylistListener primaryPlaylistListener);
 
-  /** Releases all acquired resources. Must be called once per {@link #start} call. */
-  void release();
+  /**
+   * Stops the playlist tracker and releases any acquired resources.
+   *
+   * <p>Must be called once per {@link #start} call.
+   */
+  void stop();
 
   /**
    * Registers a listener to receive events from the playlist tracker.
@@ -129,26 +152,28 @@ public interface HlsPlaylistTracker {
   void removeListener(PlaylistEventListener listener);
 
   /**
-   * Returns the master playlist.
+   * Returns the multivariant playlist.
    *
-   * <p>If the uri passed to {@link #start} points to a media playlist, an {@link HlsMasterPlaylist}
-   * with a single variant for said media playlist is returned.
+   * <p>If the uri passed to {@link #start} points to a media playlist, an {@link
+   * HlsMultivariantPlaylist} with a single variant for said media playlist is returned.
    *
-   * @return The master playlist. Null if the initial playlist has yet to be loaded.
+   * @return The multivariant playlist. Null if the initial playlist has yet to be loaded.
    */
   @Nullable
-  HlsMasterPlaylist getMasterPlaylist();
+  HlsMultivariantPlaylist getMultivariantPlaylist();
 
   /**
    * Returns the most recent snapshot available of the playlist referenced by the provided {@link
-   * HlsUrl}.
+   * Uri}.
    *
-   * @param url The {@link HlsUrl} corresponding to the requested media playlist.
-   * @return The most recent snapshot of the playlist referenced by the provided {@link HlsUrl}. May
-   *     be null if no snapshot has been loaded yet.
+   * @param url The {@link Uri} corresponding to the requested media playlist.
+   * @param isForPlayback Whether the caller might use the snapshot to request media segments for
+   *     playback. If true, the primary playlist may be updated to the one requested.
+   * @return The most recent snapshot of the playlist referenced by the provided {@link Uri}. May be
+   *     null if no snapshot has been loaded yet.
    */
   @Nullable
-  HlsMediaPlaylist getPlaylistSnapshot(HlsUrl url);
+  HlsMediaPlaylist getPlaylistSnapshot(Uri url, boolean isForPlayback);
 
   /**
    * Returns the start time of the first loaded primary playlist, or {@link C#TIME_UNSET} if no
@@ -157,42 +182,50 @@ public interface HlsPlaylistTracker {
   long getInitialStartTimeUs();
 
   /**
-   * Returns whether the snapshot of the playlist referenced by the provided {@link HlsUrl} is
-   * valid, meaning all the segments referenced by the playlist are expected to be available. If the
+   * Returns whether the snapshot of the playlist referenced by the provided {@link Uri} is valid,
+   * meaning all the segments referenced by the playlist are expected to be available. If the
    * playlist is not valid then some of the segments may no longer be available.
    *
-   * @param url The {@link HlsUrl}.
-   * @return Whether the snapshot of the playlist referenced by the provided {@link HlsUrl} is
-   *     valid.
+   * @param url The {@link Uri}.
+   * @return Whether the snapshot of the playlist referenced by the provided {@link Uri} is valid.
    */
-  boolean isSnapshotValid(HlsUrl url);
+  boolean isSnapshotValid(Uri url);
 
   /**
-   * If the tracker is having trouble refreshing the master playlist or the primary playlist, this
-   * method throws the underlying error. Otherwise, does nothing.
+   * If the tracker is having trouble refreshing the multivariant playlist or the primary playlist,
+   * this method throws the underlying error. Otherwise, does nothing.
    *
    * @throws IOException The underlying error.
    */
   void maybeThrowPrimaryPlaylistRefreshError() throws IOException;
 
   /**
-   * If the playlist is having trouble refreshing the playlist referenced by the given {@link
-   * HlsUrl}, this method throws the underlying error.
+   * If the playlist is having trouble refreshing the playlist referenced by the given {@link Uri},
+   * this method throws the underlying error.
    *
-   * @param url The {@link HlsUrl}.
+   * @param url The {@link Uri}.
    * @throws IOException The underyling error.
    */
-  void maybeThrowPlaylistRefreshError(HlsUrl url) throws IOException;
+  void maybeThrowPlaylistRefreshError(Uri url) throws IOException;
 
   /**
-   * Requests a playlist refresh and whitelists it.
+   * Excludes the given media playlist for the given duration, in milliseconds.
    *
-   * <p>The playlist tracker may choose the delay the playlist refresh. The request is discarded if
-   * a refresh was already pending.
-   *
-   * @param url The {@link HlsUrl} of the playlist to be refreshed.
+   * @param playlistUrl The URL of the media playlist.
+   * @param exclusionDurationMs The duration for which to exclude the playlist.
+   * @return Whether exclusion was successful.
    */
-  void refreshPlaylist(HlsUrl url);
+  boolean excludeMediaPlaylist(Uri playlistUrl, long exclusionDurationMs);
+
+  /**
+   * Requests a playlist refresh and removes it from the exclusion list.
+   *
+   * <p>The playlist tracker may choose to delay the playlist refresh. The request is discarded if a
+   * refresh was already pending.
+   *
+   * @param url The {@link Uri} of the playlist to be refreshed.
+   */
+  void refreshPlaylist(Uri url);
 
   /**
    * Returns whether the tracked playlists describe a live stream.

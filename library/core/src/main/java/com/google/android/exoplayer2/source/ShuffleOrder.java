@@ -21,12 +21,15 @@ import java.util.Random;
 
 /**
  * Shuffled order of indices.
+ *
+ * <p>The shuffle order must be immutable to ensure thread safety.
+ *
+ * <p>The order must be consistent when traversed both {@linkplain #getNextIndex(int) forwards} and
+ * {@linkplain #getPreviousIndex(int) backwards}.
  */
 public interface ShuffleOrder {
 
-  /**
-   * The default {@link ShuffleOrder} implementation for random shuffle order.
-   */
+  /** The default {@link ShuffleOrder} implementation for random shuffle order. */
   class DefaultShuffleOrder implements ShuffleOrder {
 
     private final Random random;
@@ -51,6 +54,17 @@ public interface ShuffleOrder {
      */
     public DefaultShuffleOrder(int length, long randomSeed) {
       this(length, new Random(randomSeed));
+    }
+
+    /**
+     * Creates an instance with a specified shuffle order and the specified random seed. The random
+     * seed is used for {@link #cloneAndInsert(int, int)} invocations.
+     *
+     * @param shuffledIndices The shuffled indices to use as order.
+     * @param randomSeed A random seed.
+     */
+    public DefaultShuffleOrder(int[] shuffledIndices, long randomSeed) {
+      this(Arrays.copyOf(shuffledIndices, shuffledIndices.length), new Random(randomSeed));
     }
 
     private DefaultShuffleOrder(int length, Random random) {
@@ -122,15 +136,16 @@ public interface ShuffleOrder {
     }
 
     @Override
-    public ShuffleOrder cloneAndRemove(int removalIndex) {
-      int[] newShuffled = new int[shuffled.length - 1];
-      boolean foundRemovedElement = false;
+    public ShuffleOrder cloneAndRemove(int indexFrom, int indexToExclusive) {
+      int numberOfElementsToRemove = indexToExclusive - indexFrom;
+      int[] newShuffled = new int[shuffled.length - numberOfElementsToRemove];
+      int foundElementsCount = 0;
       for (int i = 0; i < shuffled.length; i++) {
-        if (shuffled[i] == removalIndex) {
-          foundRemovedElement = true;
+        if (shuffled[i] >= indexFrom && shuffled[i] < indexToExclusive) {
+          foundElementsCount++;
         } else {
-          newShuffled[foundRemovedElement ? i - 1 : i] = shuffled[i] > removalIndex
-              ? shuffled[i] - 1 : shuffled[i];
+          newShuffled[i - foundElementsCount] =
+              shuffled[i] >= indexFrom ? shuffled[i] - numberOfElementsToRemove : shuffled[i];
         }
       }
       return new DefaultShuffleOrder(newShuffled, new Random(random.nextLong()));
@@ -150,12 +165,9 @@ public interface ShuffleOrder {
       }
       return shuffled;
     }
-
   }
 
-  /**
-   * A {@link ShuffleOrder} implementation which does not shuffle.
-   */
+  /** A {@link ShuffleOrder} implementation which does not shuffle. */
   final class UnshuffledShuffleOrder implements ShuffleOrder {
 
     private final int length;
@@ -200,8 +212,8 @@ public interface ShuffleOrder {
     }
 
     @Override
-    public ShuffleOrder cloneAndRemove(int removalIndex) {
-      return new UnshuffledShuffleOrder(length - 1);
+    public ShuffleOrder cloneAndRemove(int indexFrom, int indexToExclusive) {
+      return new UnshuffledShuffleOrder(length - indexToExclusive + indexFrom);
     }
 
     @Override
@@ -210,9 +222,7 @@ public interface ShuffleOrder {
     }
   }
 
-  /**
-   * Returns length of shuffle order.
-   */
+  /** Returns length of shuffle order. */
   int getLength();
 
   /**
@@ -255,12 +265,14 @@ public interface ShuffleOrder {
   ShuffleOrder cloneAndInsert(int insertionIndex, int insertionCount);
 
   /**
-   * Returns a copy of the shuffle order with one element removed.
+   * Returns a copy of the shuffle order with a range of elements removed.
    *
-   * @param removalIndex The index of the element in the unshuffled order which is to be removed.
-   * @return A copy of this {@link ShuffleOrder} without the removed element.
+   * @param indexFrom The starting index in the unshuffled order of the range to remove.
+   * @param indexToExclusive The smallest index (must be greater or equal to {@code indexFrom}) that
+   *     will not be removed.
+   * @return A copy of this {@link ShuffleOrder} without the elements in the removed range.
    */
-  ShuffleOrder cloneAndRemove(int removalIndex);
+  ShuffleOrder cloneAndRemove(int indexFrom, int indexToExclusive);
 
   /** Returns a copy of the shuffle order with all elements removed. */
   ShuffleOrder cloneAndClear();

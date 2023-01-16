@@ -15,71 +15,61 @@
  */
 package com.google.android.exoplayer2.trackselection;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.source.TrackGroup;
-import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.source.chunk.MediaChunk;
+import com.google.android.exoplayer2.source.chunk.MediaChunkIterator;
+import java.util.List;
 
-/**
- * A {@link TrackSelection} consisting of a single track.
- */
+/** A {@link TrackSelection} consisting of a single track. */
 public final class FixedTrackSelection extends BaseTrackSelection {
 
-  /**
-   * Factory for {@link FixedTrackSelection} instances.
-   */
-  public static final class Factory implements TrackSelection.Factory {
-
-    private final int reason;
-    private final @Nullable Object data;
-
-    public Factory() {
-      this.reason = C.SELECTION_REASON_UNKNOWN;
-      this.data = null;
-    }
-
-    /**
-     * @param reason A reason for the track selection.
-     * @param data Optional data associated with the track selection.
-     */
-    public Factory(int reason, @Nullable Object data) {
-      this.reason = reason;
-      this.data = data;
-    }
-
-    @Override
-    public FixedTrackSelection createTrackSelection(TrackGroup group, int... tracks) {
-      Assertions.checkArgument(tracks.length == 1);
-      return new FixedTrackSelection(group, tracks[0], reason, data);
-    }
-  }
-
-  private final int reason;
-  private final @Nullable Object data;
+  private final @C.SelectionReason int reason;
+  @Nullable private final Object data;
 
   /**
    * @param group The {@link TrackGroup}. Must not be null.
    * @param track The index of the selected track within the {@link TrackGroup}.
    */
   public FixedTrackSelection(TrackGroup group, int track) {
-    this(group, track, C.SELECTION_REASON_UNKNOWN, null);
+    this(group, /* track= */ track, /* type= */ TrackSelection.TYPE_UNSET);
   }
 
   /**
    * @param group The {@link TrackGroup}. Must not be null.
    * @param track The index of the selected track within the {@link TrackGroup}.
+   * @param type The type that will be returned from {@link TrackSelection#getType()}.
+   */
+  public FixedTrackSelection(TrackGroup group, int track, @Type int type) {
+    this(group, track, type, C.SELECTION_REASON_UNKNOWN, /* data= */ null);
+  }
+
+  /**
+   * @param group The {@link TrackGroup}. Must not be null.
+   * @param track The index of the selected track within the {@link TrackGroup}.
+   * @param type The type that will be returned from {@link TrackSelection#getType()}.
    * @param reason A reason for the track selection.
    * @param data Optional data associated with the track selection.
    */
-  public FixedTrackSelection(TrackGroup group, int track, int reason, @Nullable Object data) {
-    super(group, track);
+  public FixedTrackSelection(
+      TrackGroup group,
+      int track,
+      @Type int type,
+      @C.SelectionReason int reason,
+      @Nullable Object data) {
+    super(group, /* tracks= */ new int[] {track}, type);
     this.reason = reason;
     this.data = data;
   }
 
   @Override
-  public void updateSelectedTrack(long playbackPositionUs, long bufferedDurationUs,
-      long availableDurationUs) {
+  public void updateSelectedTrack(
+      long playbackPositionUs,
+      long bufferedDurationUs,
+      long availableDurationUs,
+      List<? extends MediaChunk> queue,
+      MediaChunkIterator[] mediaChunkIterators) {
     // Do nothing.
   }
 
@@ -89,13 +79,13 @@ public final class FixedTrackSelection extends BaseTrackSelection {
   }
 
   @Override
-  public int getSelectionReason() {
+  public @C.SelectionReason int getSelectionReason() {
     return reason;
   }
 
   @Override
-  public @Nullable Object getSelectionData() {
+  @Nullable
+  public Object getSelectionData() {
     return data;
   }
-
 }

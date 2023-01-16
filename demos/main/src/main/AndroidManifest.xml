@@ -15,12 +15,14 @@
 -->
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.google.android.exoplayer2.demo">
 
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
 
   <uses-feature android:name="android.software.leanback" android:required="false"/>
   <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
@@ -32,11 +34,15 @@
       android:banner="@drawable/ic_banner"
       android:largeHeap="true"
       android:allowBackup="false"
-      android:name="com.google.android.exoplayer2.demo.DemoApplication">
+      android:requestLegacyExternalStorage="true"
+      android:name="androidx.multidex.MultiDexApplication"
+      tools:targetApi="29">
 
-    <activity android:name="com.google.android.exoplayer2.demo.SampleChooserActivity"
+    <activity android:name=".SampleChooserActivity"
         android:configChanges="keyboardHidden"
-        android:label="@string/application_name">
+        android:label="@string/application_name"
+        android:theme="@style/Theme.AppCompat"
+        android:exported="true">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
         <category android:name="android.intent.category.LAUNCHER"/>
@@ -56,11 +62,12 @@
       </intent-filter>
     </activity>
 
-    <activity android:name="com.google.android.exoplayer2.demo.PlayerActivity"
+    <activity android:name=".PlayerActivity"
         android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
         android:launchMode="singleTop"
         android:label="@string/application_name"
-        android:theme="@style/PlayerTheme">
+        android:theme="@style/PlayerTheme"
+        android:exported="true">
       <intent-filter>
         <action android:name="com.google.android.exoplayer.demo.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
@@ -69,6 +76,13 @@
         <data android:scheme="content"/>
         <data android:scheme="asset"/>
         <data android:scheme="file"/>
+        <data android:scheme="ssai"/>
+      </intent-filter>
+      <intent-filter>
+        <action android:name="com.google.android.exoplayer.demo.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <data android:scheme="content"/>
+        <data android:mimeType="*/*"/>
       </intent-filter>
       <intent-filter>
         <action android:name="com.google.android.exoplayer.demo.action.VIEW_LIST"/>
@@ -76,10 +90,10 @@
       </intent-filter>
     </activity>
 
-    <service android:name="com.google.android.exoplayer2.demo.DemoDownloadService"
+    <service android:name=".DemoDownloadService"
         android:exported="false">
       <intent-filter>
-        <action android:name="com.google.android.exoplayer.downloadService.action.INIT"/>
+        <action android:name="com.google.android.exoplayer.downloadService.action.RESTART"/>
         <category android:name="android.intent.category.DEFAULT"/>
       </intent-filter>
     </service>

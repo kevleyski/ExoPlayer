@@ -15,24 +15,30 @@
  */
 package com.google.android.exoplayer2.source.chunk;
 
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
+import com.google.android.exoplayer2.util.Assertions;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
-/**
- * A base implementation of {@link MediaChunk} that outputs to a {@link BaseMediaChunkOutput}.
- */
+/** A base implementation of {@link MediaChunk} that outputs to a {@link BaseMediaChunkOutput}. */
 public abstract class BaseMediaChunk extends MediaChunk {
 
   /**
-   * The media time from which output will begin, or {@link C#TIME_UNSET} if the whole chunk should
-   * be output.
+   * The time from which output will begin, or {@link C#TIME_UNSET} if output will begin from the
+   * start of the chunk.
    */
-  public final long seekTimeUs;
+  public final long clippedStartTimeUs;
+  /**
+   * The time from which output will end, or {@link C#TIME_UNSET} if output will end at the end of
+   * the chunk.
+   */
+  public final long clippedEndTimeUs;
 
-  private BaseMediaChunkOutput output;
-  private int[] firstSampleIndices;
+  private @MonotonicNonNull BaseMediaChunkOutput output;
+  private int @MonotonicNonNull [] firstSampleIndices;
 
   /**
    * @param dataSource The source from which the data should be loaded.
@@ -42,23 +48,34 @@ public abstract class BaseMediaChunk extends MediaChunk {
    * @param trackSelectionData See {@link #trackSelectionData}.
    * @param startTimeUs The start time of the media contained by the chunk, in microseconds.
    * @param endTimeUs The end time of the media contained by the chunk, in microseconds.
-   * @param seekTimeUs The media time from which output will begin, or {@link C#TIME_UNSET} if the
-   *     whole chunk should be output.
+   * @param clippedStartTimeUs The time in the chunk from which output will begin, or {@link
+   *     C#TIME_UNSET} to output from the start of the chunk.
+   * @param clippedEndTimeUs The time in the chunk from which output will end, or {@link
+   *     C#TIME_UNSET} to output to the end of the chunk.
    * @param chunkIndex The index of the chunk, or {@link C#INDEX_UNSET} if it is not known.
    */
   public BaseMediaChunk(
       DataSource dataSource,
       DataSpec dataSpec,
       Format trackFormat,
-      int trackSelectionReason,
-      Object trackSelectionData,
+      @C.SelectionReason int trackSelectionReason,
+      @Nullable Object trackSelectionData,
       long startTimeUs,
       long endTimeUs,
-      long seekTimeUs,
+      long clippedStartTimeUs,
+      long clippedEndTimeUs,
       long chunkIndex) {
-    super(dataSource, dataSpec, trackFormat, trackSelectionReason, trackSelectionData, startTimeUs,
-        endTimeUs, chunkIndex);
-    this.seekTimeUs = seekTimeUs;
+    super(
+        dataSource,
+        dataSpec,
+        trackFormat,
+        trackSelectionReason,
+        trackSelectionData,
+        startTimeUs,
+        endTimeUs,
+        chunkIndex);
+    this.clippedStartTimeUs = clippedStartTimeUs;
+    this.clippedEndTimeUs = clippedEndTimeUs;
   }
 
   /**
@@ -77,14 +94,11 @@ public abstract class BaseMediaChunk extends MediaChunk {
    * from this chunk.
    */
   public final int getFirstSampleIndex(int trackIndex) {
-    return firstSampleIndices[trackIndex];
+    return Assertions.checkStateNotNull(firstSampleIndices)[trackIndex];
   }
 
-  /**
-   * Returns the output most recently passed to {@link #init(BaseMediaChunkOutput)}.
-   */
+  /** Returns the output most recently passed to {@link #init(BaseMediaChunkOutput)}. */
   protected final BaseMediaChunkOutput getOutput() {
-    return output;
+    return Assertions.checkStateNotNull(output);
   }
-
 }

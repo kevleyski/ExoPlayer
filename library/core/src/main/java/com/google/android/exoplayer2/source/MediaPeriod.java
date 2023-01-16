@@ -19,26 +19,33 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.SeekParameters;
 import com.google.android.exoplayer2.Timeline;
-import com.google.android.exoplayer2.trackselection.TrackSelection;
+import com.google.android.exoplayer2.offline.StreamKey;
+import com.google.android.exoplayer2.source.MediaSource.MediaSourceCaller;
+import com.google.android.exoplayer2.trackselection.ExoTrackSelection;
 import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
+import org.checkerframework.checker.nullness.compatqual.NullableType;
 
 /**
  * Loads media corresponding to a {@link Timeline.Period}, and allows that media to be read. All
- * methods are called on the player's internal playback thread, as described in the
- * {@link ExoPlayer} Javadoc.
+ * methods are called on the player's internal playback thread, as described in the {@link
+ * ExoPlayer} Javadoc.
+ *
+ * <p>A {@link MediaPeriod} may only able to provide one {@link SampleStream} corresponding to a
+ * group at any given time, however this {@link SampleStream} may adapt between multiple tracks
+ * within the group.
  */
 public interface MediaPeriod extends SequenceableLoader {
 
-  /**
-   * A callback to be notified of {@link MediaPeriod} events.
-   */
+  /** A callback to be notified of {@link MediaPeriod} events. */
   interface Callback extends SequenceableLoader.Callback<MediaPeriod> {
 
     /**
      * Called when preparation completes.
      *
      * <p>Called on the playback thread. After invoking this method, the {@link MediaPeriod} can
-     * expect for {@link #selectTracks(TrackSelection[], boolean[], SampleStream[], boolean[],
+     * expect for {@link #selectTracks(ExoTrackSelection[], boolean[], SampleStream[], boolean[],
      * long)} to be called with the initial track selection.
      *
      * @param mediaPeriod The prepared {@link MediaPeriod}.
@@ -53,9 +60,8 @@ public interface MediaPeriod extends SequenceableLoader {
    * {@link #maybeThrowPrepareError()} will throw an {@link IOException}.
    *
    * <p>If preparation succeeds and results in a source timeline change (e.g. the period duration
-   * becoming known), {@link
-   * MediaSource.SourceInfoRefreshListener#onSourceInfoRefreshed(MediaSource, Timeline, Object)}
-   * will be called before {@code callback.onPrepared}.
+   * becoming known), {@link MediaSourceCaller#onSourceInfoRefreshed(MediaSource, Timeline)} will be
+   * called before {@code callback.onPrepared}.
    *
    * @param callback Callback to receive updates from this period, including being notified when
    *     preparation completes.
@@ -83,22 +89,43 @@ public interface MediaPeriod extends SequenceableLoader {
   TrackGroupArray getTrackGroups();
 
   /**
+   * Returns a list of {@link StreamKey StreamKeys} which allow to filter the media in this period
+   * to load only the parts needed to play the provided {@link ExoTrackSelection TrackSelections}.
+   *
+   * <p>This method is only called after the period has been prepared.
+   *
+   * @param trackSelections The {@link ExoTrackSelection TrackSelections} describing the tracks for
+   *     which stream keys are requested.
+   * @return The corresponding {@link StreamKey StreamKeys} for the selected tracks, or an empty
+   *     list if filtering is not possible and the entire media needs to be loaded to play the
+   *     selected tracks.
+   */
+  default List<StreamKey> getStreamKeys(List<ExoTrackSelection> trackSelections) {
+    return Collections.emptyList();
+  }
+
+  /**
    * Performs a track selection.
    *
    * <p>The call receives track {@code selections} for each renderer, {@code mayRetainStreamFlags}
-   * indicating whether the existing {@code SampleStream} can be retained for each selection, and
+   * indicating whether the existing {@link SampleStream} can be retained for each selection, and
    * the existing {@code stream}s themselves. The call will update {@code streams} to reflect the
    * provided selections, clearing, setting and replacing entries as required. If an existing sample
    * stream is retained but with the requirement that the consuming renderer be reset, then the
    * corresponding flag in {@code streamResetFlags} will be set to true. This flag will also be set
    * if a new sample stream is created.
    *
+   * <p>Note that previously passed {@link ExoTrackSelection TrackSelections} are no longer valid,
+   * and any references to them must be updated to point to the new selections.
+   *
    * <p>This method is only called after the period has been prepared.
    *
    * @param selections The renderer track selections.
    * @param mayRetainStreamFlags Flags indicating whether the existing sample stream can be retained
-   *     for each selection. A {@code true} value indicates that the selection is unchanged, and
-   *     that the caller does not require that the sample stream be recreated.
+   *     for each track selection. A {@code true} value indicates that the selection is equivalent
+   *     to the one that was previously passed, and that the caller does not require that the sample
+   *     stream be recreated. If a retained sample stream holds any references to the track
+   *     selection then they must be updated to point to the new selection.
    * @param streams The existing sample streams, which will be updated to reflect the provided
    *     selections.
    * @param streamResetFlags Will be updated to indicate new sample streams, and sample streams that
@@ -108,9 +135,9 @@ public interface MediaPeriod extends SequenceableLoader {
    * @return The actual position at which the tracks were enabled, in microseconds.
    */
   long selectTracks(
-      TrackSelection[] selections,
+      @NullableType ExoTrackSelection[] selections,
       boolean[] mayRetainStreamFlags,
-      SampleStream[] streams,
+      @NullableType SampleStream[] streams,
       boolean[] streamResetFlags,
       long positionUs);
 
@@ -206,13 +233,16 @@ public interface MediaPeriod extends SequenceableLoader {
   @Override
   boolean continueLoading(long positionUs);
 
+  /** Returns whether the media period is currently loading. */
+  boolean isLoading();
+
   /**
    * Re-evaluates the buffer given the playback position.
    *
    * <p>This method is only called after the period has been prepared.
    *
-   * <p>A period may choose to discard buffered media so that it can be re-buffered in a different
-   * quality.
+   * <p>A period may choose to discard buffered media or cancel ongoing loads so that media can be
+   * re-buffered in a different quality.
    *
    * @param positionUs The current playback position in microseconds. If playback of this period has
    *     not yet started, the value will be the starting position in this period minus the duration

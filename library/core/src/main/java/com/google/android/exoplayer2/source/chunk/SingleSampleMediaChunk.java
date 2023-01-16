@@ -15,26 +15,25 @@
  */
 package com.google.android.exoplayer2.source.chunk;
 
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.extractor.DefaultExtractorInput;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
 import com.google.android.exoplayer2.extractor.TrackOutput;
 import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.DataSourceUtil;
 import com.google.android.exoplayer2.upstream.DataSpec;
-import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 
-/**
- * A {@link BaseMediaChunk} for chunks consisting of a single raw sample.
- */
+/** A {@link BaseMediaChunk} for chunks consisting of a single raw sample. */
 public final class SingleSampleMediaChunk extends BaseMediaChunk {
 
-  private final int trackType;
+  private final @C.TrackType int trackType;
   private final Format sampleFormat;
 
-  private volatile int bytesLoaded;
-  private volatile boolean loadCompleted;
+  private long nextLoadPosition;
+  private boolean loadCompleted;
 
   /**
    * @param dataSource The source from which the data should be loaded.
@@ -45,20 +44,19 @@ public final class SingleSampleMediaChunk extends BaseMediaChunk {
    * @param startTimeUs The start time of the media contained by the chunk, in microseconds.
    * @param endTimeUs The end time of the media contained by the chunk, in microseconds.
    * @param chunkIndex The index of the chunk, or {@link C#INDEX_UNSET} if it is not known.
-   * @param trackType The type of the chunk. Typically one of the {@link C} {@code TRACK_TYPE_*}
-   *     constants.
+   * @param trackType The {@link C.TrackType track type} of the chunk.
    * @param sampleFormat The {@link Format} of the sample in the chunk.
    */
   public SingleSampleMediaChunk(
       DataSource dataSource,
       DataSpec dataSpec,
       Format trackFormat,
-      int trackSelectionReason,
-      Object trackSelectionData,
+      @C.SelectionReason int trackSelectionReason,
+      @Nullable Object trackSelectionData,
       long startTimeUs,
       long endTimeUs,
       long chunkIndex,
-      int trackType,
+      @C.TrackType int trackType,
       Format sampleFormat) {
     super(
         dataSource,
@@ -68,21 +66,16 @@ public final class SingleSampleMediaChunk extends BaseMediaChunk {
         trackSelectionData,
         startTimeUs,
         endTimeUs,
-        C.TIME_UNSET,
+        /* clippedStartTimeUs= */ C.TIME_UNSET,
+        /* clippedEndTimeUs= */ C.TIME_UNSET,
         chunkIndex);
     this.trackType = trackType;
     this.sampleFormat = sampleFormat;
   }
 
-
   @Override
   public boolean isLoadCompleted() {
     return loadCompleted;
-  }
-
-  @Override
-  public long bytesLoaded() {
-    return bytesLoaded;
   }
 
   // Loadable implementation.
@@ -94,31 +87,31 @@ public final class SingleSampleMediaChunk extends BaseMediaChunk {
 
   @SuppressWarnings("NonAtomicVolatileUpdate")
   @Override
-  public void load() throws IOException, InterruptedException {
-    DataSpec loadDataSpec = dataSpec.subrange(bytesLoaded);
+  public void load() throws IOException {
+    BaseMediaChunkOutput output = getOutput();
+    output.setSampleOffsetUs(0);
+    TrackOutput trackOutput = output.track(0, trackType);
+    trackOutput.format(sampleFormat);
     try {
       // Create and open the input.
+      DataSpec loadDataSpec = dataSpec.subrange(nextLoadPosition);
       long length = dataSource.open(loadDataSpec);
       if (length != C.LENGTH_UNSET) {
-        length += bytesLoaded;
+        length += nextLoadPosition;
       }
-      ExtractorInput extractorInput = new DefaultExtractorInput(dataSource, bytesLoaded, length);
-      BaseMediaChunkOutput output = getOutput();
-      output.setSampleOffsetUs(0);
-      TrackOutput trackOutput = output.track(0, trackType);
-      trackOutput.format(sampleFormat);
+      ExtractorInput extractorInput =
+          new DefaultExtractorInput(dataSource, nextLoadPosition, length);
       // Load the sample data.
       int result = 0;
       while (result != C.RESULT_END_OF_INPUT) {
-        bytesLoaded += result;
+        nextLoadPosition += result;
         result = trackOutput.sampleData(extractorInput, Integer.MAX_VALUE, true);
       }
-      int sampleSize = bytesLoaded;
+      int sampleSize = (int) nextLoadPosition;
       trackOutput.sampleMetadata(startTimeUs, C.BUFFER_FLAG_KEY_FRAME, sampleSize, 0, null);
     } finally {
-      Util.closeQuietly(dataSource);
+      DataSourceUtil.closeQuietly(dataSource);
     }
     loadCompleted = true;
   }
-
 }

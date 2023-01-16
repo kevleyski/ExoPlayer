@@ -16,8 +16,9 @@
 package com.google.android.exoplayer2.source;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.assertThrows;
 
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.source.MergingMediaSource.IllegalMergeException;
@@ -25,65 +26,113 @@ import com.google.android.exoplayer2.testutil.FakeMediaSource;
 import com.google.android.exoplayer2.testutil.FakeTimeline;
 import com.google.android.exoplayer2.testutil.FakeTimeline.TimelineWindowDefinition;
 import com.google.android.exoplayer2.testutil.MediaSourceTestRunner;
-import com.google.android.exoplayer2.testutil.RobolectricUtil;
 import java.io.IOException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
 
 /** Unit tests for {@link MergingMediaSource}. */
-@RunWith(RobolectricTestRunner.class)
-@Config(shadows = {RobolectricUtil.CustomLooper.class, RobolectricUtil.CustomMessageQueue.class})
+@RunWith(AndroidJUnit4.class)
 public class MergingMediaSourceTest {
 
   @Test
-  public void testMergingDynamicTimelines() throws IOException {
+  public void prepare_withoutDurationClipping_usesTimelineOfFirstSource() throws IOException {
+    FakeTimeline timeline1 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* isSeekable= */ true, /* isDynamic= */ true, /* durationUs= */ 30));
+    FakeTimeline timeline2 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* isSeekable= */ true, /* isDynamic= */ true, /* durationUs= */ C.TIME_UNSET));
+    FakeTimeline timeline3 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* isSeekable= */ true, /* isDynamic= */ true, /* durationUs= */ 10));
+
+    Timeline mergedTimeline =
+        prepareMergingMediaSource(/* clipDurations= */ false, timeline1, timeline2, timeline3);
+
+    assertThat(mergedTimeline).isEqualTo(timeline1);
+  }
+
+  @Test
+  public void prepare_withDurationClipping_usesDurationOfShortestSource() throws IOException {
+    FakeTimeline timeline1 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* isSeekable= */ true, /* isDynamic= */ true, /* durationUs= */ 30));
+    FakeTimeline timeline2 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* isSeekable= */ true, /* isDynamic= */ true, /* durationUs= */ C.TIME_UNSET));
+    FakeTimeline timeline3 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* isSeekable= */ true, /* isDynamic= */ true, /* durationUs= */ 10));
+
+    Timeline mergedTimeline =
+        prepareMergingMediaSource(/* clipDurations= */ true, timeline1, timeline2, timeline3);
+
+    assertThat(mergedTimeline).isEqualTo(timeline3);
+  }
+
+  @Test
+  public void prepare_differentPeriodCounts_fails() throws IOException {
     FakeTimeline firstTimeline =
-        new FakeTimeline(new TimelineWindowDefinition(true, true, C.TIME_UNSET));
+        new FakeTimeline(new TimelineWindowDefinition(/* periodCount= */ 1, /* id= */ 1));
     FakeTimeline secondTimeline =
-        new FakeTimeline(new TimelineWindowDefinition(true, true, C.TIME_UNSET));
-    testMergingMediaSourcePrepare(firstTimeline, secondTimeline);
+        new FakeTimeline(new TimelineWindowDefinition(/* periodCount= */ 2, /* id= */ 2));
+
+    IllegalMergeException exception =
+        assertThrows(
+            IllegalMergeException.class,
+            () ->
+                prepareMergingMediaSource(
+                    /* clipDurations= */ false, firstTimeline, secondTimeline));
+    assertThat(exception.reason).isEqualTo(IllegalMergeException.REASON_PERIOD_COUNT_MISMATCH);
   }
 
   @Test
-  public void testMergingStaticTimelines() throws IOException {
-    FakeTimeline firstTimeline = new FakeTimeline(new TimelineWindowDefinition(true, false, 20));
-    FakeTimeline secondTimeline = new FakeTimeline(new TimelineWindowDefinition(true, false, 10));
-    testMergingMediaSourcePrepare(firstTimeline, secondTimeline);
-  }
-
-  @Test
-  public void testMergingTimelinesWithDifferentPeriodCounts() throws IOException {
-    FakeTimeline firstTimeline = new FakeTimeline(new TimelineWindowDefinition(1, null));
-    FakeTimeline secondTimeline = new FakeTimeline(new TimelineWindowDefinition(2, null));
-    try {
-      testMergingMediaSourcePrepare(firstTimeline, secondTimeline);
-      fail("Expected merging to fail.");
-    } catch (IllegalMergeException e) {
-      assertThat(e.reason).isEqualTo(IllegalMergeException.REASON_PERIOD_COUNT_MISMATCH);
-    }
-  }
-
-  /**
-   * Wraps the specified timelines in a {@link MergingMediaSource}, prepares it and checks that it
-   * forwards the first of the wrapped timelines.
-   */
-  private static void testMergingMediaSourcePrepare(Timeline... timelines) throws IOException {
-    FakeMediaSource[] mediaSources = new FakeMediaSource[timelines.length];
-    for (int i = 0; i < timelines.length; i++) {
-      mediaSources[i] = new FakeMediaSource(timelines[i], null);
+  public void createPeriod_createsChildPeriods() throws Exception {
+    FakeMediaSource[] mediaSources = new FakeMediaSource[2];
+    for (int i = 0; i < mediaSources.length; i++) {
+      mediaSources[i] = new FakeMediaSource(new FakeTimeline(/* windowCount= */ 2));
     }
     MergingMediaSource mediaSource = new MergingMediaSource(mediaSources);
     MediaSourceTestRunner testRunner = new MediaSourceTestRunner(mediaSource, null);
     try {
-      Timeline timeline = testRunner.prepareSource();
-      // The merged timeline should always be the one from the first child.
-      assertThat(timeline).isEqualTo(timelines[0]);
-      testRunner.releaseSource();
-      for (int i = 0; i < mediaSources.length; i++) {
-        mediaSources[i].assertReleased();
+      testRunner.prepareSource();
+      testRunner.assertPrepareAndReleaseAllPeriods();
+      for (FakeMediaSource element : mediaSources) {
+        assertThat(element.getCreatedMediaPeriods()).isNotEmpty();
       }
+      testRunner.releaseSource();
+    } finally {
+      testRunner.release();
+    }
+  }
+
+  /**
+   * Wraps the specified timelines in a {@link MergingMediaSource}, prepares it and returns the
+   * merged timeline.
+   */
+  private static Timeline prepareMergingMediaSource(boolean clipDurations, Timeline... timelines)
+      throws IOException {
+    FakeMediaSource[] mediaSources = new FakeMediaSource[timelines.length];
+    for (int i = 0; i < timelines.length; i++) {
+      mediaSources[i] = new FakeMediaSource(timelines[i]);
+    }
+    MergingMediaSource mergingMediaSource =
+        new MergingMediaSource(/* adjustPeriodTimeOffsets= */ false, clipDurations, mediaSources);
+    MediaSourceTestRunner testRunner =
+        new MediaSourceTestRunner(mergingMediaSource, /* allocator= */ null);
+    try {
+      Timeline timeline = testRunner.prepareSource();
+      testRunner.releaseSource();
+      for (FakeMediaSource mediaSource : mediaSources) {
+        mediaSource.assertReleased();
+      }
+      return timeline;
     } finally {
       testRunner.release();
     }

@@ -15,54 +15,45 @@
  */
 package com.google.android.exoplayer2.demo;
 
-import android.app.Activity;
-import android.app.AlertDialog;
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import android.content.Context;
 import android.content.DialogInterface;
 import android.net.Uri;
-import android.os.Handler;
-import android.os.HandlerThread;
-import android.util.Log;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.widget.ArrayAdapter;
-import android.widget.ListView;
+import android.os.AsyncTask;
 import android.widget.Toast;
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.offline.ActionFile;
-import com.google.android.exoplayer2.offline.DownloadAction;
+import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
+import androidx.fragment.app.FragmentManager;
+import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.MediaItem;
+import com.google.android.exoplayer2.RenderersFactory;
+import com.google.android.exoplayer2.Tracks;
+import com.google.android.exoplayer2.drm.DrmInitData;
+import com.google.android.exoplayer2.drm.DrmSession;
+import com.google.android.exoplayer2.drm.DrmSessionEventListener;
+import com.google.android.exoplayer2.drm.OfflineLicenseHelper;
+import com.google.android.exoplayer2.offline.Download;
+import com.google.android.exoplayer2.offline.DownloadCursor;
 import com.google.android.exoplayer2.offline.DownloadHelper;
+import com.google.android.exoplayer2.offline.DownloadHelper.LiveContentUnsupportedException;
+import com.google.android.exoplayer2.offline.DownloadIndex;
 import com.google.android.exoplayer2.offline.DownloadManager;
-import com.google.android.exoplayer2.offline.DownloadManager.TaskState;
+import com.google.android.exoplayer2.offline.DownloadRequest;
 import com.google.android.exoplayer2.offline.DownloadService;
-import com.google.android.exoplayer2.offline.ProgressiveDownloadHelper;
-import com.google.android.exoplayer2.offline.SegmentDownloadAction;
-import com.google.android.exoplayer2.offline.TrackKey;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.source.dash.offline.DashDownloadHelper;
-import com.google.android.exoplayer2.source.hls.offline.HlsDownloadHelper;
-import com.google.android.exoplayer2.source.smoothstreaming.offline.SsDownloadHelper;
-import com.google.android.exoplayer2.ui.DefaultTrackNameProvider;
-import com.google.android.exoplayer2.ui.TrackNameProvider;
+import com.google.android.exoplayer2.trackselection.MappingTrackSelector.MappedTrackInfo;
+import com.google.android.exoplayer2.trackselection.TrackSelectionParameters;
 import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
-import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.concurrent.CopyOnWriteArraySet;
 
-/**
- * Tracks media that has been downloaded.
- *
- * <p>Tracked downloads are persisted using an {@link ActionFile}, however in a real application
- * it's expected that state will be stored directly in the application's media database, so that it
- * can be queried efficiently together with other information about the media.
- */
-public class DownloadTracker implements DownloadManager.Listener {
+/** Tracks media that has been downloaded. */
+public class DownloadTracker {
 
   /** Listens for changes in the tracked downloads. */
   public interface Listener {
@@ -75,228 +66,341 @@ public class DownloadTracker implements DownloadManager.Listener {
 
   private final Context context;
   private final DataSource.Factory dataSourceFactory;
-  private final TrackNameProvider trackNameProvider;
   private final CopyOnWriteArraySet<Listener> listeners;
-  private final HashMap<Uri, DownloadAction> trackedDownloadStates;
-  private final ActionFile actionFile;
-  private final Handler actionFileWriteHandler;
+  private final HashMap<Uri, Download> downloads;
+  private final DownloadIndex downloadIndex;
+
+  @Nullable private StartDownloadDialogHelper startDownloadDialogHelper;
 
   public DownloadTracker(
-      Context context,
-      DataSource.Factory dataSourceFactory,
-      File actionFile,
-      DownloadAction.Deserializer[] deserializers) {
+      Context context, DataSource.Factory dataSourceFactory, DownloadManager downloadManager) {
     this.context = context.getApplicationContext();
     this.dataSourceFactory = dataSourceFactory;
-    this.actionFile = new ActionFile(actionFile);
-    trackNameProvider = new DefaultTrackNameProvider(context.getResources());
     listeners = new CopyOnWriteArraySet<>();
-    trackedDownloadStates = new HashMap<>();
-    HandlerThread actionFileWriteThread = new HandlerThread("DownloadTracker");
-    actionFileWriteThread.start();
-    actionFileWriteHandler = new Handler(actionFileWriteThread.getLooper());
-    loadTrackedActions(deserializers);
+    downloads = new HashMap<>();
+    downloadIndex = downloadManager.getDownloadIndex();
+    downloadManager.addListener(new DownloadManagerListener());
+    loadDownloads();
   }
 
   public void addListener(Listener listener) {
-    listeners.add(listener);
+    listeners.add(checkNotNull(listener));
   }
 
   public void removeListener(Listener listener) {
     listeners.remove(listener);
   }
 
-  public boolean isDownloaded(Uri uri) {
-    return trackedDownloadStates.containsKey(uri);
+  public boolean isDownloaded(MediaItem mediaItem) {
+    @Nullable Download download = downloads.get(checkNotNull(mediaItem.localConfiguration).uri);
+    return download != null && download.state != Download.STATE_FAILED;
   }
 
-  @SuppressWarnings("unchecked")
-  public <K> List<K> getOfflineStreamKeys(Uri uri) {
-    if (!trackedDownloadStates.containsKey(uri)) {
-      return Collections.emptyList();
-    }
-    DownloadAction action = trackedDownloadStates.get(uri);
-    if (action instanceof SegmentDownloadAction) {
-      return ((SegmentDownloadAction) action).keys;
-    }
-    return Collections.emptyList();
+  @Nullable
+  public DownloadRequest getDownloadRequest(Uri uri) {
+    @Nullable Download download = downloads.get(uri);
+    return download != null && download.state != Download.STATE_FAILED ? download.request : null;
   }
 
-  public void toggleDownload(Activity activity, String name, Uri uri, String extension) {
-    if (isDownloaded(uri)) {
-      DownloadAction removeAction =
-          getDownloadHelper(uri, extension).getRemoveAction(Util.getUtf8Bytes(name));
-      startServiceWithAction(removeAction);
+  public void toggleDownload(
+      FragmentManager fragmentManager, MediaItem mediaItem, RenderersFactory renderersFactory) {
+    @Nullable Download download = downloads.get(checkNotNull(mediaItem.localConfiguration).uri);
+    if (download != null && download.state != Download.STATE_FAILED) {
+      DownloadService.sendRemoveDownload(
+          context, DemoDownloadService.class, download.request.id, /* foreground= */ false);
     } else {
-      StartDownloadDialogHelper helper =
-          new StartDownloadDialogHelper(activity, getDownloadHelper(uri, extension), name);
-      helper.prepare();
-    }
-  }
-
-  // DownloadManager.Listener
-
-  @Override
-  public void onInitialized(DownloadManager downloadManager) {
-    // Do nothing.
-  }
-
-  @Override
-  public void onTaskStateChanged(DownloadManager downloadManager, TaskState taskState) {
-    DownloadAction action = taskState.action;
-    Uri uri = action.uri;
-    if ((action.isRemoveAction && taskState.state == TaskState.STATE_COMPLETED)
-        || (!action.isRemoveAction && taskState.state == TaskState.STATE_FAILED)) {
-      // A download has been removed, or has failed. Stop tracking it.
-      if (trackedDownloadStates.remove(uri) != null) {
-        handleTrackedDownloadStatesChanged();
+      if (startDownloadDialogHelper != null) {
+        startDownloadDialogHelper.release();
       }
+      startDownloadDialogHelper =
+          new StartDownloadDialogHelper(
+              fragmentManager,
+              DownloadHelper.forMediaItem(context, mediaItem, renderersFactory, dataSourceFactory),
+              mediaItem);
     }
   }
 
-  @Override
-  public void onIdle(DownloadManager downloadManager) {
-    // Do nothing.
-  }
-
-  // Internal methods
-
-  private void loadTrackedActions(DownloadAction.Deserializer[] deserializers) {
-    try {
-      DownloadAction[] allActions = actionFile.load(deserializers);
-      for (DownloadAction action : allActions) {
-        trackedDownloadStates.put(action.uri, action);
+  private void loadDownloads() {
+    try (DownloadCursor loadedDownloads = downloadIndex.getDownloads()) {
+      while (loadedDownloads.moveToNext()) {
+        Download download = loadedDownloads.getDownload();
+        downloads.put(download.request.uri, download);
       }
     } catch (IOException e) {
-      Log.e(TAG, "Failed to load tracked actions", e);
+      Log.w(TAG, "Failed to query downloads", e);
     }
   }
 
-  private void handleTrackedDownloadStatesChanged() {
-    for (Listener listener : listeners) {
-      listener.onDownloadsChanged();
+  private class DownloadManagerListener implements DownloadManager.Listener {
+
+    @Override
+    public void onDownloadChanged(
+        DownloadManager downloadManager, Download download, @Nullable Exception finalException) {
+      downloads.put(download.request.uri, download);
+      for (Listener listener : listeners) {
+        listener.onDownloadsChanged();
+      }
     }
-    final DownloadAction[] actions = trackedDownloadStates.values().toArray(new DownloadAction[0]);
-    actionFileWriteHandler.post(
-        new Runnable() {
-          @Override
-          public void run() {
-            try {
-              actionFile.store(actions);
-            } catch (IOException e) {
-              Log.e(TAG, "Failed to store tracked actions", e);
-            }
-          }
-        });
-  }
 
-  private void startDownload(DownloadAction action) {
-    if (trackedDownloadStates.containsKey(action.uri)) {
-      // This content is already being downloaded. Do nothing.
-      return;
-    }
-    trackedDownloadStates.put(action.uri, action);
-    handleTrackedDownloadStatesChanged();
-    startServiceWithAction(action);
-  }
-
-  private void startServiceWithAction(DownloadAction action) {
-    DownloadService.startWithAction(context, DemoDownloadService.class, action, false);
-  }
-
-  private DownloadHelper getDownloadHelper(Uri uri, String extension) {
-    int type = Util.inferContentType(uri, extension);
-    switch (type) {
-      case C.TYPE_DASH:
-        return new DashDownloadHelper(uri, dataSourceFactory);
-      case C.TYPE_SS:
-        return new SsDownloadHelper(uri, dataSourceFactory);
-      case C.TYPE_HLS:
-        return new HlsDownloadHelper(uri, dataSourceFactory);
-      case C.TYPE_OTHER:
-        return new ProgressiveDownloadHelper(uri);
-      default:
-        throw new IllegalStateException("Unsupported type: " + type);
+    @Override
+    public void onDownloadRemoved(DownloadManager downloadManager, Download download) {
+      downloads.remove(download.request.uri);
+      for (Listener listener : listeners) {
+        listener.onDownloadsChanged();
+      }
     }
   }
 
   private final class StartDownloadDialogHelper
-      implements DownloadHelper.Callback, DialogInterface.OnClickListener {
+      implements DownloadHelper.Callback,
+          TrackSelectionDialog.TrackSelectionListener,
+          DialogInterface.OnDismissListener {
 
+    private final FragmentManager fragmentManager;
     private final DownloadHelper downloadHelper;
-    private final String name;
+    private final MediaItem mediaItem;
 
-    private final AlertDialog.Builder builder;
-    private final View dialogView;
-    private final List<TrackKey> trackKeys;
-    private final ArrayAdapter<String> trackTitles;
-    private final ListView representationList;
+    private TrackSelectionDialog trackSelectionDialog;
+    private WidevineOfflineLicenseFetchTask widevineOfflineLicenseFetchTask;
+    @Nullable private byte[] keySetId;
 
     public StartDownloadDialogHelper(
-        Activity activity, DownloadHelper downloadHelper, String name) {
+        FragmentManager fragmentManager, DownloadHelper downloadHelper, MediaItem mediaItem) {
+      this.fragmentManager = fragmentManager;
       this.downloadHelper = downloadHelper;
-      this.name = name;
-      builder =
-          new AlertDialog.Builder(activity)
-              .setTitle(R.string.exo_download_description)
-              .setPositiveButton(android.R.string.ok, this)
-              .setNegativeButton(android.R.string.cancel, null);
-
-      // Inflate with the builder's context to ensure the correct style is used.
-      LayoutInflater dialogInflater = LayoutInflater.from(builder.getContext());
-      dialogView = dialogInflater.inflate(R.layout.start_download_dialog, null);
-
-      trackKeys = new ArrayList<>();
-      trackTitles =
-          new ArrayAdapter<>(
-              builder.getContext(), android.R.layout.simple_list_item_multiple_choice);
-      representationList = dialogView.findViewById(R.id.representation_list);
-      representationList.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
-      representationList.setAdapter(trackTitles);
-    }
-
-    public void prepare() {
+      this.mediaItem = mediaItem;
       downloadHelper.prepare(this);
     }
 
+    public void release() {
+      downloadHelper.release();
+      if (trackSelectionDialog != null) {
+        trackSelectionDialog.dismiss();
+      }
+      if (widevineOfflineLicenseFetchTask != null) {
+        widevineOfflineLicenseFetchTask.cancel(false);
+      }
+    }
+
+    // DownloadHelper.Callback implementation.
+
     @Override
     public void onPrepared(DownloadHelper helper) {
-      for (int i = 0; i < downloadHelper.getPeriodCount(); i++) {
-        TrackGroupArray trackGroups = downloadHelper.getTrackGroups(i);
-        for (int j = 0; j < trackGroups.length; j++) {
-          TrackGroup trackGroup = trackGroups.get(j);
-          for (int k = 0; k < trackGroup.length; k++) {
-            trackKeys.add(new TrackKey(i, j, k));
-            trackTitles.add(trackNameProvider.getTrackName(trackGroup.getFormat(k)));
-          }
-        }
-        if (!trackKeys.isEmpty()) {
-          builder.setView(dialogView);
-        }
-        builder.create().show();
+      @Nullable Format format = getFirstFormatWithDrmInitData(helper);
+      if (format == null) {
+        onDownloadPrepared(helper);
+        return;
       }
+
+      // The content is DRM protected. We need to acquire an offline license.
+      if (Util.SDK_INT < 18) {
+        Toast.makeText(context, R.string.error_drm_unsupported_before_api_18, Toast.LENGTH_LONG)
+            .show();
+        Log.e(TAG, "Downloading DRM protected content is not supported on API versions below 18");
+        return;
+      }
+      // TODO(internal b/163107948): Support cases where DrmInitData are not in the manifest.
+      if (!hasSchemaData(format.drmInitData)) {
+        Toast.makeText(context, R.string.download_start_error_offline_license, Toast.LENGTH_LONG)
+            .show();
+        Log.e(
+            TAG,
+            "Downloading content where DRM scheme data is not located in the manifest is not"
+                + " supported");
+        return;
+      }
+      widevineOfflineLicenseFetchTask =
+          new WidevineOfflineLicenseFetchTask(
+              format,
+              mediaItem.localConfiguration.drmConfiguration,
+              dataSourceFactory,
+              /* dialogHelper= */ this,
+              helper);
+      widevineOfflineLicenseFetchTask.execute();
     }
 
     @Override
     public void onPrepareError(DownloadHelper helper, IOException e) {
-      Toast.makeText(
-              context.getApplicationContext(), R.string.download_start_error, Toast.LENGTH_LONG)
+      boolean isLiveContent = e instanceof LiveContentUnsupportedException;
+      int toastStringId =
+          isLiveContent ? R.string.download_live_unsupported : R.string.download_start_error;
+      String logMessage =
+          isLiveContent ? "Downloading live content unsupported" : "Failed to start download";
+      Toast.makeText(context, toastStringId, Toast.LENGTH_LONG).show();
+      Log.e(TAG, logMessage, e);
+    }
+
+    // TrackSelectionListener implementation.
+
+    @Override
+    public void onTracksSelected(TrackSelectionParameters trackSelectionParameters) {
+      for (int periodIndex = 0; periodIndex < downloadHelper.getPeriodCount(); periodIndex++) {
+        downloadHelper.clearTrackSelections(periodIndex);
+        downloadHelper.addTrackSelection(periodIndex, trackSelectionParameters);
+      }
+      DownloadRequest downloadRequest = buildDownloadRequest();
+      if (downloadRequest.streamKeys.isEmpty()) {
+        // All tracks were deselected in the dialog. Don't start the download.
+        return;
+      }
+      startDownload(downloadRequest);
+    }
+
+    // DialogInterface.OnDismissListener implementation.
+
+    @Override
+    public void onDismiss(DialogInterface dialogInterface) {
+      trackSelectionDialog = null;
+      downloadHelper.release();
+    }
+
+    // Internal methods.
+
+    /**
+     * Returns the first {@link Format} with a non-null {@link Format#drmInitData} found in the
+     * content's tracks, or null if none is found.
+     */
+    @Nullable
+    private Format getFirstFormatWithDrmInitData(DownloadHelper helper) {
+      for (int periodIndex = 0; periodIndex < helper.getPeriodCount(); periodIndex++) {
+        MappedTrackInfo mappedTrackInfo = helper.getMappedTrackInfo(periodIndex);
+        for (int rendererIndex = 0;
+            rendererIndex < mappedTrackInfo.getRendererCount();
+            rendererIndex++) {
+          TrackGroupArray trackGroups = mappedTrackInfo.getTrackGroups(rendererIndex);
+          for (int trackGroupIndex = 0; trackGroupIndex < trackGroups.length; trackGroupIndex++) {
+            TrackGroup trackGroup = trackGroups.get(trackGroupIndex);
+            for (int formatIndex = 0; formatIndex < trackGroup.length; formatIndex++) {
+              Format format = trackGroup.getFormat(formatIndex);
+              if (format.drmInitData != null) {
+                return format;
+              }
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    private void onOfflineLicenseFetched(DownloadHelper helper, byte[] keySetId) {
+      this.keySetId = keySetId;
+      onDownloadPrepared(helper);
+    }
+
+    private void onOfflineLicenseFetchedError(DrmSession.DrmSessionException e) {
+      Toast.makeText(context, R.string.download_start_error_offline_license, Toast.LENGTH_LONG)
           .show();
+      Log.e(TAG, "Failed to fetch offline DRM license", e);
+    }
+
+    private void onDownloadPrepared(DownloadHelper helper) {
+      if (helper.getPeriodCount() == 0) {
+        Log.d(TAG, "No periods found. Downloading entire stream.");
+        startDownload();
+        downloadHelper.release();
+        return;
+      }
+
+      Tracks tracks = downloadHelper.getTracks(/* periodIndex= */ 0);
+      if (!TrackSelectionDialog.willHaveContent(tracks)) {
+        Log.d(TAG, "No dialog content. Downloading entire stream.");
+        startDownload();
+        downloadHelper.release();
+        return;
+      }
+      trackSelectionDialog =
+          TrackSelectionDialog.createForTracksAndParameters(
+              /* titleId= */ R.string.exo_download_description,
+              tracks,
+              DownloadHelper.getDefaultTrackSelectorParameters(context),
+              /* allowAdaptiveSelections= */ false,
+              /* allowMultipleOverrides= */ true,
+              /* onTracksSelectedListener= */ this,
+              /* onDismissListener= */ this);
+      trackSelectionDialog.show(fragmentManager, /* tag= */ null);
+    }
+
+    /**
+     * Returns whether any the {@link DrmInitData.SchemeData} contained in {@code drmInitData} has
+     * non-null {@link DrmInitData.SchemeData#data}.
+     */
+    private boolean hasSchemaData(DrmInitData drmInitData) {
+      for (int i = 0; i < drmInitData.schemeDataCount; i++) {
+        if (drmInitData.get(i).hasData()) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    private void startDownload() {
+      startDownload(buildDownloadRequest());
+    }
+
+    private void startDownload(DownloadRequest downloadRequest) {
+      DownloadService.sendAddDownload(
+          context, DemoDownloadService.class, downloadRequest, /* foreground= */ false);
+    }
+
+    private DownloadRequest buildDownloadRequest() {
+      return downloadHelper
+          .getDownloadRequest(
+              Util.getUtf8Bytes(checkNotNull(mediaItem.mediaMetadata.title.toString())))
+          .copyWithKeySetId(keySetId);
+    }
+  }
+
+  /** Downloads a Widevine offline license in a background thread. */
+  @RequiresApi(18)
+  private static final class WidevineOfflineLicenseFetchTask extends AsyncTask<Void, Void, Void> {
+
+    private final Format format;
+    private final MediaItem.DrmConfiguration drmConfiguration;
+    private final DataSource.Factory dataSourceFactory;
+    private final StartDownloadDialogHelper dialogHelper;
+    private final DownloadHelper downloadHelper;
+
+    @Nullable private byte[] keySetId;
+    @Nullable private DrmSession.DrmSessionException drmSessionException;
+
+    public WidevineOfflineLicenseFetchTask(
+        Format format,
+        MediaItem.DrmConfiguration drmConfiguration,
+        DataSource.Factory dataSourceFactory,
+        StartDownloadDialogHelper dialogHelper,
+        DownloadHelper downloadHelper) {
+      this.format = format;
+      this.drmConfiguration = drmConfiguration;
+      this.dataSourceFactory = dataSourceFactory;
+      this.dialogHelper = dialogHelper;
+      this.downloadHelper = downloadHelper;
     }
 
     @Override
-    public void onClick(DialogInterface dialog, int which) {
-      ArrayList<TrackKey> selectedTrackKeys = new ArrayList<>();
-      for (int i = 0; i < representationList.getChildCount(); i++) {
-        if (representationList.isItemChecked(i)) {
-          selectedTrackKeys.add(trackKeys.get(i));
-        }
+    protected Void doInBackground(Void... voids) {
+      OfflineLicenseHelper offlineLicenseHelper =
+          OfflineLicenseHelper.newWidevineInstance(
+              drmConfiguration.licenseUri.toString(),
+              drmConfiguration.forceDefaultLicenseUri,
+              dataSourceFactory,
+              drmConfiguration.licenseRequestHeaders,
+              new DrmSessionEventListener.EventDispatcher());
+      try {
+        keySetId = offlineLicenseHelper.downloadLicense(format);
+      } catch (DrmSession.DrmSessionException e) {
+        drmSessionException = e;
+      } finally {
+        offlineLicenseHelper.release();
       }
-      if (!selectedTrackKeys.isEmpty() || trackKeys.isEmpty()) {
-        // We have selected keys, or we're dealing with single stream content.
-        DownloadAction downloadAction =
-            downloadHelper.getDownloadAction(Util.getUtf8Bytes(name), selectedTrackKeys);
-        startDownload(downloadAction);
+      return null;
+    }
+
+    @Override
+    protected void onPostExecute(Void aVoid) {
+      if (drmSessionException != null) {
+        dialogHelper.onOfflineLicenseFetchedError(drmSessionException);
+      } else {
+        dialogHelper.onOfflineLicenseFetched(downloadHelper, checkNotNull(keySetId));
       }
     }
   }

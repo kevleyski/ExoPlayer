@@ -15,101 +15,106 @@
  */
 package com.google.android.exoplayer2.ui;
 
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.Dialog;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.res.TypedArray;
-import android.support.annotation.AttrRes;
-import android.support.annotation.Nullable;
 import android.util.AttributeSet;
-import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.CheckedTextView;
 import android.widget.LinearLayout;
-import com.google.android.exoplayer2.RendererCapabilities;
+import androidx.annotation.AttrRes;
+import androidx.annotation.Nullable;
+import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.Tracks;
 import com.google.android.exoplayer2.source.TrackGroup;
-import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
-import com.google.android.exoplayer2.trackselection.DefaultTrackSelector.SelectionOverride;
-import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
+import com.google.android.exoplayer2.trackselection.TrackSelectionOverride;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.common.collect.ImmutableList;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /** A view for making track selections. */
 public class TrackSelectionView extends LinearLayout {
+
+  /** Listener for changes to the selected tracks. */
+  public interface TrackSelectionListener {
+
+    /**
+     * Called when the selected tracks changed.
+     *
+     * @param isDisabled Whether the disabled option is selected.
+     * @param overrides The selected track overrides.
+     */
+    void onTrackSelectionChanged(
+        boolean isDisabled, Map<TrackGroup, TrackSelectionOverride> overrides);
+  }
+
+  /**
+   * Returns the subset of {@code overrides} that apply to the specified {@code trackGroups}. If
+   * {@code allowMultipleOverrides} is {@code} then at most one override is retained, which will be
+   * the one whose track group is first in {@code trackGroups}.
+   *
+   * @param overrides The overrides to filter.
+   * @param trackGroups The track groups whose overrides should be retained.
+   * @param allowMultipleOverrides Whether more than one override can be retained.
+   * @return The filtered overrides.
+   */
+  public static Map<TrackGroup, TrackSelectionOverride> filterOverrides(
+      Map<TrackGroup, TrackSelectionOverride> overrides,
+      List<Tracks.Group> trackGroups,
+      boolean allowMultipleOverrides) {
+    HashMap<TrackGroup, TrackSelectionOverride> filteredOverrides = new HashMap<>();
+    for (int i = 0; i < trackGroups.size(); i++) {
+      Tracks.Group trackGroup = trackGroups.get(i);
+      @Nullable TrackSelectionOverride override = overrides.get(trackGroup.getMediaTrackGroup());
+      if (override != null && (allowMultipleOverrides || filteredOverrides.isEmpty())) {
+        filteredOverrides.put(override.mediaTrackGroup, override);
+      }
+    }
+    return filteredOverrides;
+  }
 
   private final int selectableItemBackgroundResourceId;
   private final LayoutInflater inflater;
   private final CheckedTextView disableView;
   private final CheckedTextView defaultView;
   private final ComponentListener componentListener;
+  private final List<Tracks.Group> trackGroups;
+  private final Map<TrackGroup, TrackSelectionOverride> overrides;
 
   private boolean allowAdaptiveSelections;
+  private boolean allowMultipleOverrides;
 
   private TrackNameProvider trackNameProvider;
   private CheckedTextView[][] trackViews;
 
-  private DefaultTrackSelector trackSelector;
-  private int rendererIndex;
-  private TrackGroupArray trackGroups;
   private boolean isDisabled;
-  private @Nullable SelectionOverride override;
+  @Nullable private Comparator<TrackInfo> trackInfoComparator;
+  @Nullable private TrackSelectionListener listener;
 
-  /**
-   * Gets a pair consisting of a dialog and the {@link TrackSelectionView} that will be shown by it.
-   *
-   * @param activity The parent activity.
-   * @param title The dialog's title.
-   * @param trackSelector The track selector.
-   * @param rendererIndex The index of the renderer.
-   * @return The dialog and the {@link TrackSelectionView} that will be shown by it.
-   */
-  public static Pair<AlertDialog, TrackSelectionView> getDialog(
-      Activity activity,
-      CharSequence title,
-      DefaultTrackSelector trackSelector,
-      int rendererIndex) {
-    AlertDialog.Builder builder = new AlertDialog.Builder(activity);
-
-    // Inflate with the builder's context to ensure the correct style is used.
-    LayoutInflater dialogInflater = LayoutInflater.from(builder.getContext());
-    View dialogView = dialogInflater.inflate(R.layout.exo_track_selection_dialog, null);
-
-    final TrackSelectionView selectionView = dialogView.findViewById(R.id.exo_track_selection_view);
-    selectionView.init(trackSelector, rendererIndex);
-    Dialog.OnClickListener okClickListener =
-        new Dialog.OnClickListener() {
-          @Override
-          public void onClick(DialogInterface dialog, int which) {
-            selectionView.applySelection();
-          }
-        };
-
-    AlertDialog dialog =
-        builder
-            .setTitle(title)
-            .setView(dialogView)
-            .setPositiveButton(android.R.string.ok, okClickListener)
-            .setNegativeButton(android.R.string.cancel, null)
-            .create();
-    return Pair.create(dialog, selectionView);
-  }
-
+  /** Creates a track selection view. */
   public TrackSelectionView(Context context) {
     this(context, null);
   }
 
+  /** Creates a track selection view. */
   public TrackSelectionView(Context context, @Nullable AttributeSet attrs) {
     this(context, attrs, 0);
   }
 
+  /** Creates a track selection view. */
   @SuppressWarnings("nullness")
   public TrackSelectionView(
       Context context, @Nullable AttributeSet attrs, @AttrRes int defStyleAttr) {
     super(context, attrs, defStyleAttr);
+    setOrientation(LinearLayout.VERTICAL);
+    // Don't save view hierarchy as it needs to be reinitialized with a call to init.
+    setSaveFromParentEnabled(false);
+
     TypedArray attributeArray =
         context
             .getTheme()
@@ -120,6 +125,8 @@ public class TrackSelectionView extends LinearLayout {
     inflater = LayoutInflater.from(context);
     componentListener = new ComponentListener();
     trackNameProvider = new DefaultTrackNameProvider(getResources());
+    trackGroups = new ArrayList<>();
+    overrides = new HashMap<>();
 
     // View for disabling the renderer.
     disableView =
@@ -163,9 +170,29 @@ public class TrackSelectionView extends LinearLayout {
   }
 
   /**
-   * Sets whether an option is available for disabling the renderer.
+   * Sets whether tracks from multiple track groups can be selected. This results in multiple {@link
+   * TrackSelectionOverride TrackSelectionOverrides} being returned by {@link #getOverrides()}.
    *
-   * @param showDisableOption Whether the disable option is shown.
+   * @param allowMultipleOverrides Whether tracks from multiple track groups can be selected.
+   */
+  public void setAllowMultipleOverrides(boolean allowMultipleOverrides) {
+    if (this.allowMultipleOverrides != allowMultipleOverrides) {
+      this.allowMultipleOverrides = allowMultipleOverrides;
+      if (!allowMultipleOverrides && overrides.size() > 1) {
+        // Re-filter the overrides to retain only one of them.
+        Map<TrackGroup, TrackSelectionOverride> filteredOverrides =
+            filterOverrides(overrides, trackGroups, /* allowMultipleOverrides= */ false);
+        overrides.clear();
+        overrides.putAll(filteredOverrides);
+      }
+      updateViews();
+    }
+  }
+
+  /**
+   * Sets whether the disabled option can be selected.
+   *
+   * @param showDisableOption Whether the disabled option can be selected.
    */
   public void setShowDisableOption(boolean showDisableOption) {
     disableView.setVisibility(showDisableOption ? View.VISIBLE : View.GONE);
@@ -183,16 +210,47 @@ public class TrackSelectionView extends LinearLayout {
   }
 
   /**
-   * Initialize the view to select tracks for a specified renderer using a {@link
-   * DefaultTrackSelector}.
+   * Initialize the view to select tracks from a specified list of track groups.
    *
-   * @param trackSelector The {@link DefaultTrackSelector}.
-   * @param rendererIndex The index of the renderer.
+   * @param trackGroups The {@link Tracks.Group track groups}.
+   * @param isDisabled Whether the disabled option should be initially selected.
+   * @param overrides The initially selected track overrides. Any overrides that do not correspond
+   *     to track groups in {@code trackGroups} will be ignored. If {@link
+   *     #setAllowMultipleOverrides(boolean)} hasn't been set to {@code true} then all but one
+   *     override will be ignored. The retained override will be the one whose track group is first
+   *     in {@code trackGroups}.
+   * @param trackFormatComparator An optional comparator used to determine the display order of the
+   *     tracks within each track group.
+   * @param listener An optional listener to receive selection updates.
    */
-  public void init(DefaultTrackSelector trackSelector, int rendererIndex) {
-    this.trackSelector = trackSelector;
-    this.rendererIndex = rendererIndex;
+  public void init(
+      List<Tracks.Group> trackGroups,
+      boolean isDisabled,
+      Map<TrackGroup, TrackSelectionOverride> overrides,
+      @Nullable Comparator<Format> trackFormatComparator,
+      @Nullable TrackSelectionListener listener) {
+    this.isDisabled = isDisabled;
+    this.trackInfoComparator =
+        trackFormatComparator == null
+            ? null
+            : (o1, o2) -> trackFormatComparator.compare(o1.getFormat(), o2.getFormat());
+    this.listener = listener;
+
+    this.trackGroups.clear();
+    this.trackGroups.addAll(trackGroups);
+    this.overrides.clear();
+    this.overrides.putAll(filterOverrides(overrides, trackGroups, allowMultipleOverrides));
     updateViews();
+  }
+
+  /** Returns whether the disabled option is selected. */
+  public boolean getIsDisabled() {
+    return isDisabled;
+  }
+
+  /** Returns the selected track overrides. */
+  public Map<TrackGroup, TrackSelectionOverride> getOverrides() {
+    return overrides;
   }
 
   // Private methods.
@@ -203,9 +261,7 @@ public class TrackSelectionView extends LinearLayout {
       removeViewAt(i);
     }
 
-    MappingTrackSelector.MappedTrackInfo trackInfo =
-        trackSelector == null ? null : trackSelector.getCurrentMappedTrackInfo();
-    if (trackSelector == null || trackInfo == null) {
+    if (trackGroups.isEmpty()) {
       // The view is not initialized.
       disableView.setEnabled(false);
       defaultView.setEnabled(false);
@@ -214,44 +270,43 @@ public class TrackSelectionView extends LinearLayout {
     disableView.setEnabled(true);
     defaultView.setEnabled(true);
 
-    trackGroups = trackInfo.getTrackGroups(rendererIndex);
-
-    DefaultTrackSelector.Parameters parameters = trackSelector.getParameters();
-    isDisabled = parameters.getRendererDisabled(rendererIndex);
-    override = parameters.getSelectionOverride(rendererIndex, trackGroups);
-
     // Add per-track views.
-    trackViews = new CheckedTextView[trackGroups.length][];
-    for (int groupIndex = 0; groupIndex < trackGroups.length; groupIndex++) {
-      TrackGroup group = trackGroups.get(groupIndex);
-      boolean enableAdaptiveSelections =
-          allowAdaptiveSelections
-              && trackGroups.get(groupIndex).length > 1
-              && trackInfo.getAdaptiveSupport(rendererIndex, groupIndex, false)
-                  != RendererCapabilities.ADAPTIVE_NOT_SUPPORTED;
-      trackViews[groupIndex] = new CheckedTextView[group.length];
-      for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
+    trackViews = new CheckedTextView[trackGroups.size()][];
+    boolean enableMultipleChoiceForMultipleOverrides = shouldEnableMultiGroupSelection();
+    for (int trackGroupIndex = 0; trackGroupIndex < trackGroups.size(); trackGroupIndex++) {
+      Tracks.Group trackGroup = trackGroups.get(trackGroupIndex);
+      boolean enableMultipleChoiceForAdaptiveSelections = shouldEnableAdaptiveSelection(trackGroup);
+      trackViews[trackGroupIndex] = new CheckedTextView[trackGroup.length];
+
+      TrackInfo[] trackInfos = new TrackInfo[trackGroup.length];
+      for (int trackIndex = 0; trackIndex < trackGroup.length; trackIndex++) {
+        trackInfos[trackIndex] = new TrackInfo(trackGroup, trackIndex);
+      }
+      if (trackInfoComparator != null) {
+        Arrays.sort(trackInfos, trackInfoComparator);
+      }
+
+      for (int trackIndex = 0; trackIndex < trackInfos.length; trackIndex++) {
         if (trackIndex == 0) {
           addView(inflater.inflate(R.layout.exo_list_divider, this, false));
         }
         int trackViewLayoutId =
-            enableAdaptiveSelections
+            enableMultipleChoiceForAdaptiveSelections || enableMultipleChoiceForMultipleOverrides
                 ? android.R.layout.simple_list_item_multiple_choice
                 : android.R.layout.simple_list_item_single_choice;
         CheckedTextView trackView =
             (CheckedTextView) inflater.inflate(trackViewLayoutId, this, false);
         trackView.setBackgroundResource(selectableItemBackgroundResourceId);
-        trackView.setText(trackNameProvider.getTrackName(group.getFormat(trackIndex)));
-        if (trackInfo.getTrackSupport(rendererIndex, groupIndex, trackIndex)
-            == RendererCapabilities.FORMAT_HANDLED) {
+        trackView.setText(trackNameProvider.getTrackName(trackInfos[trackIndex].getFormat()));
+        trackView.setTag(trackInfos[trackIndex]);
+        if (trackGroup.isTrackSupported(trackIndex)) {
           trackView.setFocusable(true);
-          trackView.setTag(Pair.create(groupIndex, trackIndex));
           trackView.setOnClickListener(componentListener);
         } else {
           trackView.setFocusable(false);
           trackView.setEnabled(false);
         }
-        trackViews[groupIndex][trackIndex] = trackView;
+        trackViews[trackGroupIndex][trackIndex] = trackView;
         addView(trackView);
       }
     }
@@ -261,24 +316,19 @@ public class TrackSelectionView extends LinearLayout {
 
   private void updateViewStates() {
     disableView.setChecked(isDisabled);
-    defaultView.setChecked(!isDisabled && override == null);
+    defaultView.setChecked(!isDisabled && overrides.size() == 0);
     for (int i = 0; i < trackViews.length; i++) {
+      @Nullable
+      TrackSelectionOverride override = overrides.get(trackGroups.get(i).getMediaTrackGroup());
       for (int j = 0; j < trackViews[i].length; j++) {
-        trackViews[i][j].setChecked(
-            override != null && override.groupIndex == i && override.containsTrack(j));
+        if (override != null) {
+          TrackInfo trackInfo = (TrackInfo) Assertions.checkNotNull(trackViews[i][j].getTag());
+          trackViews[i][j].setChecked(override.trackIndices.contains(trackInfo.trackIndex));
+        } else {
+          trackViews[i][j].setChecked(false);
+        }
       }
     }
-  }
-
-  private void applySelection() {
-    DefaultTrackSelector.ParametersBuilder parametersBuilder = trackSelector.buildUponParameters();
-    parametersBuilder.setRendererDisabled(rendererIndex, isDisabled);
-    if (override != null) {
-      parametersBuilder.setSelectionOverride(rendererIndex, trackGroups, override);
-    } else {
-      parametersBuilder.clearSelectionOverrides(rendererIndex);
-    }
-    trackSelector.setParameters(parametersBuilder);
   }
 
   private void onClick(View view) {
@@ -290,63 +340,72 @@ public class TrackSelectionView extends LinearLayout {
       onTrackViewClicked(view);
     }
     updateViewStates();
+    if (listener != null) {
+      listener.onTrackSelectionChanged(getIsDisabled(), getOverrides());
+    }
   }
 
   private void onDisableViewClicked() {
     isDisabled = true;
-    override = null;
+    overrides.clear();
   }
 
   private void onDefaultViewClicked() {
     isDisabled = false;
-    override = null;
+    overrides.clear();
   }
 
   private void onTrackViewClicked(View view) {
     isDisabled = false;
-    @SuppressWarnings("unchecked")
-    Pair<Integer, Integer> tag = (Pair<Integer, Integer>) view.getTag();
-    int groupIndex = tag.first;
-    int trackIndex = tag.second;
-    if (override == null || override.groupIndex != groupIndex || !allowAdaptiveSelections) {
-      // A new override is being started.
-      override = new SelectionOverride(groupIndex, trackIndex);
+    TrackInfo trackInfo = (TrackInfo) Assertions.checkNotNull(view.getTag());
+    TrackGroup mediaTrackGroup = trackInfo.trackGroup.getMediaTrackGroup();
+    int trackIndex = trackInfo.trackIndex;
+    @Nullable TrackSelectionOverride override = overrides.get(mediaTrackGroup);
+    if (override == null) {
+      // Start new override.
+      if (!allowMultipleOverrides && overrides.size() > 0) {
+        // Removed other overrides if we don't allow multiple overrides.
+        overrides.clear();
+      }
+      overrides.put(
+          mediaTrackGroup,
+          new TrackSelectionOverride(mediaTrackGroup, ImmutableList.of(trackIndex)));
     } else {
       // An existing override is being modified.
-      int overrideLength = override.length;
-      int[] overrideTracks = override.tracks;
-      if (((CheckedTextView) view).isChecked()) {
+      ArrayList<Integer> trackIndices = new ArrayList<>(override.trackIndices);
+      boolean isCurrentlySelected = ((CheckedTextView) view).isChecked();
+      boolean isAdaptiveAllowed = shouldEnableAdaptiveSelection(trackInfo.trackGroup);
+      boolean isUsingCheckBox = isAdaptiveAllowed || shouldEnableMultiGroupSelection();
+      if (isCurrentlySelected && isUsingCheckBox) {
         // Remove the track from the override.
-        if (overrideLength == 1) {
-          // The last track is being removed, so the override becomes empty.
-          override = null;
-          isDisabled = true;
+        trackIndices.remove((Integer) trackIndex);
+        if (trackIndices.isEmpty()) {
+          // The last track has been removed, so remove the whole override.
+          overrides.remove(mediaTrackGroup);
         } else {
-          int[] tracks = getTracksRemoving(overrideTracks, trackIndex);
-          override = new SelectionOverride(groupIndex, tracks);
+          overrides.put(mediaTrackGroup, new TrackSelectionOverride(mediaTrackGroup, trackIndices));
         }
-      } else {
-        int[] tracks = getTracksAdding(overrideTracks, trackIndex);
-        override = new SelectionOverride(groupIndex, tracks);
+      } else if (!isCurrentlySelected) {
+        if (isAdaptiveAllowed) {
+          // Add new track to adaptive override.
+          trackIndices.add(trackIndex);
+          overrides.put(mediaTrackGroup, new TrackSelectionOverride(mediaTrackGroup, trackIndices));
+        } else {
+          // Replace existing track in override.
+          overrides.put(
+              mediaTrackGroup,
+              new TrackSelectionOverride(mediaTrackGroup, ImmutableList.of(trackIndex)));
+        }
       }
     }
   }
 
-  private static int[] getTracksAdding(int[] tracks, int addedTrack) {
-    tracks = Arrays.copyOf(tracks, tracks.length + 1);
-    tracks[tracks.length - 1] = addedTrack;
-    return tracks;
+  private boolean shouldEnableAdaptiveSelection(Tracks.Group trackGroup) {
+    return allowAdaptiveSelections && trackGroup.isAdaptiveSupported();
   }
 
-  private static int[] getTracksRemoving(int[] tracks, int removedTrack) {
-    int[] newTracks = new int[tracks.length - 1];
-    int trackCount = 0;
-    for (int track : tracks) {
-      if (track != removedTrack) {
-        newTracks[trackCount++] = track;
-      }
-    }
-    return newTracks;
+  private boolean shouldEnableMultiGroupSelection() {
+    return allowMultipleOverrides && trackGroups.size() > 1;
   }
 
   // Internal classes.
@@ -356,6 +415,20 @@ public class TrackSelectionView extends LinearLayout {
     @Override
     public void onClick(View view) {
       TrackSelectionView.this.onClick(view);
+    }
+  }
+
+  private static final class TrackInfo {
+    public final Tracks.Group trackGroup;
+    public final int trackIndex;
+
+    public TrackInfo(Tracks.Group trackGroup, int trackIndex) {
+      this.trackGroup = trackGroup;
+      this.trackIndex = trackIndex;
+    }
+
+    public Format getFormat() {
+      return trackGroup.getTrackFormat(trackIndex);
     }
   }
 }

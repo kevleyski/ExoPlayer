@@ -15,24 +15,45 @@
  */
 package com.google.android.exoplayer2.ui;
 
+import static com.google.android.exoplayer2.Player.COMMAND_SEEK_BACK;
+import static com.google.android.exoplayer2.Player.COMMAND_SEEK_FORWARD;
+import static com.google.android.exoplayer2.Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM;
+import static com.google.android.exoplayer2.Player.COMMAND_SEEK_TO_NEXT;
+import static com.google.android.exoplayer2.Player.COMMAND_SEEK_TO_PREVIOUS;
+import static com.google.android.exoplayer2.Player.EVENT_AVAILABLE_COMMANDS_CHANGED;
+import static com.google.android.exoplayer2.Player.EVENT_IS_PLAYING_CHANGED;
+import static com.google.android.exoplayer2.Player.EVENT_PLAYBACK_STATE_CHANGED;
+import static com.google.android.exoplayer2.Player.EVENT_PLAY_WHEN_READY_CHANGED;
+import static com.google.android.exoplayer2.Player.EVENT_POSITION_DISCONTINUITY;
+import static com.google.android.exoplayer2.Player.EVENT_REPEAT_MODE_CHANGED;
+import static com.google.android.exoplayer2.Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED;
+import static com.google.android.exoplayer2.Player.EVENT_TIMELINE_CHANGED;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
+import android.os.Looper;
 import android.os.SystemClock;
-import android.support.annotation.Nullable;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
+import androidx.annotation.DoNotInline;
+import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
-import com.google.android.exoplayer2.PlaybackPreparer;
 import com.google.android.exoplayer2.Player;
+import com.google.android.exoplayer2.Player.Events;
+import com.google.android.exoplayer2.Player.State;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.RepeatModeUtil;
@@ -40,15 +61,16 @@ import com.google.android.exoplayer2.util.Util;
 import java.util.Arrays;
 import java.util.Formatter;
 import java.util.Locale;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * A view for controlling {@link Player} instances.
  *
  * <p>A PlayerControlView can be customized by setting attributes (or calling corresponding
- * methods), overriding the view's layout file or by specifying a custom view layout file, as
- * outlined below.
+ * methods), overriding drawables, overriding the view's layout file, or by specifying a custom view
+ * layout file.
  *
- * <h3>Attributes</h3>
+ * <h2>Attributes</h2>
  *
  * The following attributes can be set on a PlayerControlView when used in a layout XML file:
  *
@@ -60,16 +82,25 @@ import java.util.Locale;
  *         <li>Corresponding method: {@link #setShowTimeoutMs(int)}
  *         <li>Default: {@link #DEFAULT_SHOW_TIMEOUT_MS}
  *       </ul>
- *   <li><b>{@code rewind_increment}</b> - The duration of the rewind applied when the user taps the
- *       rewind button, in milliseconds. Use zero to disable the rewind button.
+ *   <li><b>{@code show_rewind_button}</b> - Whether the rewind button is shown.
  *       <ul>
- *         <li>Corresponding method: {@link #setRewindIncrementMs(int)}
- *         <li>Default: {@link #DEFAULT_REWIND_MS}
+ *         <li>Corresponding method: {@link #setShowRewindButton(boolean)}
+ *         <li>Default: true
  *       </ul>
- *   <li><b>{@code fastforward_increment}</b> - Like {@code rewind_increment}, but for fast forward.
+ *   <li><b>{@code show_fastforward_button}</b> - Whether the fast forward button is shown.
  *       <ul>
- *         <li>Corresponding method: {@link #setFastForwardIncrementMs(int)}
- *         <li>Default: {@link #DEFAULT_FAST_FORWARD_MS}
+ *         <li>Corresponding method: {@link #setShowFastForwardButton(boolean)}
+ *         <li>Default: true
+ *       </ul>
+ *   <li><b>{@code show_previous_button}</b> - Whether the previous button is shown.
+ *       <ul>
+ *         <li>Corresponding method: {@link #setShowPreviousButton(boolean)}
+ *         <li>Default: true
+ *       </ul>
+ *   <li><b>{@code show_next_button}</b> - Whether the next button is shown.
+ *       <ul>
+ *         <li>Corresponding method: {@link #setShowNextButton(boolean)}
+ *         <li>Default: true
  *       </ul>
  *   <li><b>{@code repeat_toggle_modes}</b> - A flagged enumeration value specifying which repeat
  *       mode toggle options are enabled. Valid values are: {@code none}, {@code one}, {@code all},
@@ -83,23 +114,54 @@ import java.util.Locale;
  *         <li>Corresponding method: {@link #setShowShuffleButton(boolean)}
  *         <li>Default: false
  *       </ul>
+ *   <li><b>{@code time_bar_min_update_interval}</b> - Specifies the minimum interval between time
+ *       bar position updates.
+ *       <ul>
+ *         <li>Corresponding method: {@link #setTimeBarMinUpdateInterval(int)}
+ *         <li>Default: {@link #DEFAULT_TIME_BAR_MIN_UPDATE_INTERVAL_MS}
+ *       </ul>
  *   <li><b>{@code controller_layout_id}</b> - Specifies the id of the layout to be inflated. See
  *       below for more details.
  *       <ul>
  *         <li>Corresponding method: None
- *         <li>Default: {@code R.id.exo_player_control_view}
+ *         <li>Default: {@code R.layout.exo_player_control_view}
  *       </ul>
+ *   <li>All attributes that can be set on {@link DefaultTimeBar} can also be set on a
+ *       PlayerControlView, and will be propagated to the inflated {@link DefaultTimeBar} unless the
+ *       layout is overridden to specify a custom {@code exo_progress} (see below).
  * </ul>
  *
- * <h3>Overriding the layout file</h3>
+ * <h2>Overriding drawables</h2>
+ *
+ * The drawables used by PlayerControlView (with its default layout file) can be overridden by
+ * drawables with the same names defined in your application. The drawables that can be overridden
+ * are:
+ *
+ * <ul>
+ *   <li><b>{@code exo_controls_play}</b> - The play icon.
+ *   <li><b>{@code exo_controls_pause}</b> - The pause icon.
+ *   <li><b>{@code exo_controls_rewind}</b> - The rewind icon.
+ *   <li><b>{@code exo_controls_fastforward}</b> - The fast forward icon.
+ *   <li><b>{@code exo_controls_previous}</b> - The previous icon.
+ *   <li><b>{@code exo_controls_next}</b> - The next icon.
+ *   <li><b>{@code exo_controls_repeat_off}</b> - The repeat icon for {@link
+ *       Player#REPEAT_MODE_OFF}.
+ *   <li><b>{@code exo_controls_repeat_one}</b> - The repeat icon for {@link
+ *       Player#REPEAT_MODE_ONE}.
+ *   <li><b>{@code exo_controls_repeat_all}</b> - The repeat icon for {@link
+ *       Player#REPEAT_MODE_ALL}.
+ *   <li><b>{@code exo_controls_shuffle_off}</b> - The shuffle icon when shuffling is disabled.
+ *   <li><b>{@code exo_controls_shuffle_on}</b> - The shuffle icon when shuffling is enabled.
+ *   <li><b>{@code exo_controls_vr}</b> - The VR icon.
+ * </ul>
+ *
+ * <h2>Overriding the layout file</h2>
  *
  * To customize the layout of PlayerControlView throughout your app, or just for certain
  * configurations, you can define {@code exo_player_control_view.xml} layout files in your
  * application {@code res/layout*} directories. These layouts will override the one provided by the
- * ExoPlayer library, and will be inflated for use by PlayerControlView. The view identifies and
- * binds its children by looking for the following ids:
- *
- * <p>
+ * library, and will be inflated for use by PlayerControlView. The view identifies and binds its
+ * children by looking for the following ids:
  *
  * <ul>
  *   <li><b>{@code exo_play}</b> - The play button.
@@ -110,27 +172,40 @@ import java.util.Locale;
  *       <ul>
  *         <li>Type: {@link View}
  *       </ul>
- *   <li><b>{@code exo_ffwd}</b> - The fast forward button.
- *       <ul>
- *         <li>Type: {@link View}
- *       </ul>
  *   <li><b>{@code exo_rew}</b> - The rewind button.
  *       <ul>
  *         <li>Type: {@link View}
  *       </ul>
- *   <li><b>{@code exo_prev}</b> - The previous track button.
+ *   <li><b>{@code exo_ffwd}</b> - The fast forward button.
  *       <ul>
  *         <li>Type: {@link View}
  *       </ul>
- *   <li><b>{@code exo_next}</b> - The next track button.
+ *   <li><b>{@code exo_prev}</b> - The previous button.
+ *       <ul>
+ *         <li>Type: {@link View}
+ *       </ul>
+ *   <li><b>{@code exo_next}</b> - The next button.
  *       <ul>
  *         <li>Type: {@link View}
  *       </ul>
  *   <li><b>{@code exo_repeat_toggle}</b> - The repeat toggle button.
  *       <ul>
- *         <li>Type: {@link View}
+ *         <li>Type: {@link ImageView}
+ *         <li>Note: PlayerControlView will programmatically set the drawable on the repeat toggle
+ *             button according to the player's current repeat mode. The drawables used are {@code
+ *             exo_controls_repeat_off}, {@code exo_controls_repeat_one} and {@code
+ *             exo_controls_repeat_all}. See the section above for information on overriding these
+ *             drawables.
  *       </ul>
  *   <li><b>{@code exo_shuffle}</b> - The shuffle button.
+ *       <ul>
+ *         <li>Type: {@link ImageView}
+ *         <li>Note: PlayerControlView will programmatically set the drawable on the shuffle button
+ *             according to the player's current repeat mode. The drawables used are {@code
+ *             exo_controls_shuffle_off} and {@code exo_controls_shuffle_on}. See the section above
+ *             for information on overriding these drawables.
+ *       </ul>
+ *   <li><b>{@code exo_vr}</b> - The VR mode button.
  *       <ul>
  *         <li>Type: {@link View}
  *       </ul>
@@ -142,7 +217,15 @@ import java.util.Locale;
  *       <ul>
  *         <li>Type: {@link TextView}
  *       </ul>
+ *   <li><b>{@code exo_progress_placeholder}</b> - A placeholder that's replaced with the inflated
+ *       {@link DefaultTimeBar}. Ignored if an {@code exo_progress} view exists.
+ *       <ul>
+ *         <li>Type: {@link View}
+ *       </ul>
  *   <li><b>{@code exo_progress}</b> - Time bar that's updated during playback and allows seeking.
+ *       {@link DefaultTimeBar} attributes set on the PlayerControlView will not be automatically
+ *       propagated through to this instance. If a view exists with this id, any {@code
+ *       exo_progress_placeholder} view will be ignored.
  *       <ul>
  *         <li>Type: {@link TimeBar}
  *       </ul>
@@ -151,7 +234,7 @@ import java.util.Locale;
  * <p>All child views are optional and so can be omitted if not required, however where defined they
  * must be of the expected type.
  *
- * <h3>Specifying a custom layout file</h3>
+ * <h2>Specifying a custom layout file</h2>
  *
  * Defining your own {@code exo_player_control_view.xml} is useful to customize the layout of
  * PlayerControlView throughout your application. It's also possible to customize the layout for a
@@ -176,37 +259,51 @@ public class PlayerControlView extends FrameLayout {
     void onVisibilityChange(int visibility);
   }
 
-  /** The default fast forward increment, in milliseconds. */
-  public static final int DEFAULT_FAST_FORWARD_MS = 15000;
-  /** The default rewind increment, in milliseconds. */
-  public static final int DEFAULT_REWIND_MS = 5000;
+  /** Listener to be notified when progress has been updated. */
+  public interface ProgressUpdateListener {
+
+    /**
+     * Called when progress needs to be updated.
+     *
+     * @param position The current position.
+     * @param bufferedPosition The current buffered position.
+     */
+    void onProgressUpdate(long position, long bufferedPosition);
+  }
+
   /** The default show timeout, in milliseconds. */
   public static final int DEFAULT_SHOW_TIMEOUT_MS = 5000;
   /** The default repeat toggle modes. */
   public static final @RepeatModeUtil.RepeatToggleModes int DEFAULT_REPEAT_TOGGLE_MODES =
       RepeatModeUtil.REPEAT_TOGGLE_MODE_NONE;
-
+  /** The default minimum interval between time bar position updates. */
+  public static final int DEFAULT_TIME_BAR_MIN_UPDATE_INTERVAL_MS = 200;
   /** The maximum number of windows that can be shown in a multi-window time bar. */
   public static final int MAX_WINDOWS_FOR_MULTI_WINDOW_TIME_BAR = 100;
 
-  private static final long MAX_POSITION_FOR_SEEK_TO_PREVIOUS = 3000;
+  /** The maximum interval between time bar position updates. */
+  private static final int MAX_UPDATE_INTERVAL_MS = 1000;
 
   private final ComponentListener componentListener;
-  private final View previousButton;
-  private final View nextButton;
-  private final View playButton;
-  private final View pauseButton;
-  private final View fastForwardButton;
-  private final View rewindButton;
-  private final ImageView repeatToggleButton;
-  private final View shuffleButton;
-  private final TextView durationView;
-  private final TextView positionView;
-  private final TimeBar timeBar;
+  private final CopyOnWriteArrayList<VisibilityListener> visibilityListeners;
+  @Nullable private final View previousButton;
+  @Nullable private final View nextButton;
+  @Nullable private final View playButton;
+  @Nullable private final View pauseButton;
+  @Nullable private final View fastForwardButton;
+  @Nullable private final View rewindButton;
+  @Nullable private final ImageView repeatToggleButton;
+  @Nullable private final ImageView shuffleButton;
+  @Nullable private final View vrButton;
+  @Nullable private final TextView durationView;
+  @Nullable private final TextView positionView;
+  @Nullable private final TimeBar timeBar;
   private final StringBuilder formatBuilder;
   private final Formatter formatter;
   private final Timeline.Period period;
   private final Timeline.Window window;
+  private final Runnable updateProgressAction;
+  private final Runnable hideAction;
 
   private final Drawable repeatOffButtonDrawable;
   private final Drawable repeatOneButtonDrawable;
@@ -214,84 +311,101 @@ public class PlayerControlView extends FrameLayout {
   private final String repeatOffButtonContentDescription;
   private final String repeatOneButtonContentDescription;
   private final String repeatAllButtonContentDescription;
+  private final Drawable shuffleOnButtonDrawable;
+  private final Drawable shuffleOffButtonDrawable;
+  private final float buttonAlphaEnabled;
+  private final float buttonAlphaDisabled;
+  private final String shuffleOnContentDescription;
+  private final String shuffleOffContentDescription;
 
-  private Player player;
-  private com.google.android.exoplayer2.ControlDispatcher controlDispatcher;
-  private VisibilityListener visibilityListener;
-  private @Nullable PlaybackPreparer playbackPreparer;
+  @Nullable private Player player;
+  @Nullable private ProgressUpdateListener progressUpdateListener;
 
   private boolean isAttachedToWindow;
   private boolean showMultiWindowTimeBar;
   private boolean multiWindowTimeBar;
   private boolean scrubbing;
-  private int rewindMs;
-  private int fastForwardMs;
   private int showTimeoutMs;
+  private int timeBarMinUpdateIntervalMs;
   private @RepeatModeUtil.RepeatToggleModes int repeatToggleModes;
+  private boolean showRewindButton;
+  private boolean showFastForwardButton;
+  private boolean showPreviousButton;
+  private boolean showNextButton;
   private boolean showShuffleButton;
   private long hideAtMs;
   private long[] adGroupTimesMs;
   private boolean[] playedAdGroups;
   private long[] extraAdGroupTimesMs;
   private boolean[] extraPlayedAdGroups;
-
-  private final Runnable updateProgressAction =
-      new Runnable() {
-        @Override
-        public void run() {
-          updateProgress();
-        }
-      };
-
-  private final Runnable hideAction =
-      new Runnable() {
-        @Override
-        public void run() {
-          hide();
-        }
-      };
+  private long currentWindowOffset;
+  private long currentPosition;
+  private long currentBufferedPosition;
 
   public PlayerControlView(Context context) {
-    this(context, null);
+    this(context, /* attrs= */ null);
   }
 
-  public PlayerControlView(Context context, AttributeSet attrs) {
-    this(context, attrs, 0);
+  public PlayerControlView(Context context, @Nullable AttributeSet attrs) {
+    this(context, attrs, /* defStyleAttr= */ 0);
   }
 
-  public PlayerControlView(Context context, AttributeSet attrs, int defStyleAttr) {
+  public PlayerControlView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
     this(context, attrs, defStyleAttr, attrs);
   }
 
+  @SuppressWarnings({
+    "nullness:argument",
+    "nullness:method.invocation",
+    "nullness:methodref.receiver.bound"
+  })
   public PlayerControlView(
-      Context context, AttributeSet attrs, int defStyleAttr, AttributeSet playbackAttrs) {
+      Context context,
+      @Nullable AttributeSet attrs,
+      int defStyleAttr,
+      @Nullable AttributeSet playbackAttrs) {
     super(context, attrs, defStyleAttr);
     int controllerLayoutId = R.layout.exo_player_control_view;
-    rewindMs = DEFAULT_REWIND_MS;
-    fastForwardMs = DEFAULT_FAST_FORWARD_MS;
     showTimeoutMs = DEFAULT_SHOW_TIMEOUT_MS;
     repeatToggleModes = DEFAULT_REPEAT_TOGGLE_MODES;
+    timeBarMinUpdateIntervalMs = DEFAULT_TIME_BAR_MIN_UPDATE_INTERVAL_MS;
     hideAtMs = C.TIME_UNSET;
+    showRewindButton = true;
+    showFastForwardButton = true;
+    showPreviousButton = true;
+    showNextButton = true;
     showShuffleButton = false;
     if (playbackAttrs != null) {
       TypedArray a =
           context
               .getTheme()
-              .obtainStyledAttributes(playbackAttrs, R.styleable.PlayerControlView, 0, 0);
+              .obtainStyledAttributes(
+                  playbackAttrs, R.styleable.PlayerControlView, defStyleAttr, /* defStyleRes= */ 0);
       try {
-        rewindMs = a.getInt(R.styleable.PlayerControlView_rewind_increment, rewindMs);
-        fastForwardMs =
-            a.getInt(R.styleable.PlayerControlView_fastforward_increment, fastForwardMs);
         showTimeoutMs = a.getInt(R.styleable.PlayerControlView_show_timeout, showTimeoutMs);
         controllerLayoutId =
             a.getResourceId(R.styleable.PlayerControlView_controller_layout_id, controllerLayoutId);
         repeatToggleModes = getRepeatToggleModes(a, repeatToggleModes);
+        showRewindButton =
+            a.getBoolean(R.styleable.PlayerControlView_show_rewind_button, showRewindButton);
+        showFastForwardButton =
+            a.getBoolean(
+                R.styleable.PlayerControlView_show_fastforward_button, showFastForwardButton);
+        showPreviousButton =
+            a.getBoolean(R.styleable.PlayerControlView_show_previous_button, showPreviousButton);
+        showNextButton =
+            a.getBoolean(R.styleable.PlayerControlView_show_next_button, showNextButton);
         showShuffleButton =
             a.getBoolean(R.styleable.PlayerControlView_show_shuffle_button, showShuffleButton);
+        setTimeBarMinUpdateInterval(
+            a.getInt(
+                R.styleable.PlayerControlView_time_bar_min_update_interval,
+                timeBarMinUpdateIntervalMs));
       } finally {
         a.recycle();
       }
     }
+    visibilityListeners = new CopyOnWriteArrayList<>();
     period = new Timeline.Period();
     window = new Timeline.Window();
     formatBuilder = new StringBuilder();
@@ -301,14 +415,33 @@ public class PlayerControlView extends FrameLayout {
     extraAdGroupTimesMs = new long[0];
     extraPlayedAdGroups = new boolean[0];
     componentListener = new ComponentListener();
-    controlDispatcher = new com.google.android.exoplayer2.DefaultControlDispatcher();
+    updateProgressAction = this::updateProgress;
+    hideAction = this::hide;
 
-    LayoutInflater.from(context).inflate(controllerLayoutId, this);
+    LayoutInflater.from(context).inflate(controllerLayoutId, /* root= */ this);
     setDescendantFocusability(FOCUS_AFTER_DESCENDANTS);
 
+    TimeBar customTimeBar = findViewById(R.id.exo_progress);
+    View timeBarPlaceholder = findViewById(R.id.exo_progress_placeholder);
+    if (customTimeBar != null) {
+      timeBar = customTimeBar;
+    } else if (timeBarPlaceholder != null) {
+      // Propagate playbackAttrs as timebarAttrs so that DefaultTimeBar's custom attributes are
+      // transferred, but standard attributes (e.g. background) are not.
+      DefaultTimeBar defaultTimeBar = new DefaultTimeBar(context, null, 0, playbackAttrs);
+      defaultTimeBar.setId(R.id.exo_progress);
+      defaultTimeBar.setLayoutParams(timeBarPlaceholder.getLayoutParams());
+      ViewGroup parent = ((ViewGroup) timeBarPlaceholder.getParent());
+      int timeBarIndex = parent.indexOfChild(timeBarPlaceholder);
+      parent.removeView(timeBarPlaceholder);
+      parent.addView(defaultTimeBar, timeBarIndex);
+      timeBar = defaultTimeBar;
+    } else {
+      timeBar = null;
+    }
     durationView = findViewById(R.id.exo_duration);
     positionView = findViewById(R.id.exo_position);
-    timeBar = findViewById(R.id.exo_progress);
+
     if (timeBar != null) {
       timeBar.addListener(componentListener);
     }
@@ -344,28 +477,41 @@ public class PlayerControlView extends FrameLayout {
     if (shuffleButton != null) {
       shuffleButton.setOnClickListener(componentListener);
     }
+    vrButton = findViewById(R.id.exo_vr);
+    setShowVrButton(false);
+    updateButton(false, false, vrButton);
+
     Resources resources = context.getResources();
+
+    buttonAlphaEnabled =
+        (float) resources.getInteger(R.integer.exo_media_button_opacity_percentage_enabled) / 100;
+    buttonAlphaDisabled =
+        (float) resources.getInteger(R.integer.exo_media_button_opacity_percentage_disabled) / 100;
+
     repeatOffButtonDrawable = resources.getDrawable(R.drawable.exo_controls_repeat_off);
     repeatOneButtonDrawable = resources.getDrawable(R.drawable.exo_controls_repeat_one);
     repeatAllButtonDrawable = resources.getDrawable(R.drawable.exo_controls_repeat_all);
+    shuffleOnButtonDrawable = resources.getDrawable(R.drawable.exo_controls_shuffle_on);
+    shuffleOffButtonDrawable = resources.getDrawable(R.drawable.exo_controls_shuffle_off);
     repeatOffButtonContentDescription =
         resources.getString(R.string.exo_controls_repeat_off_description);
     repeatOneButtonContentDescription =
         resources.getString(R.string.exo_controls_repeat_one_description);
     repeatAllButtonContentDescription =
         resources.getString(R.string.exo_controls_repeat_all_description);
-  }
+    shuffleOnContentDescription = resources.getString(R.string.exo_controls_shuffle_on_description);
+    shuffleOffContentDescription =
+        resources.getString(R.string.exo_controls_shuffle_off_description);
 
-  @SuppressWarnings("ResourceType")
-  private static @RepeatModeUtil.RepeatToggleModes int getRepeatToggleModes(
-      TypedArray a, @RepeatModeUtil.RepeatToggleModes int repeatToggleModes) {
-    return a.getInt(R.styleable.PlayerControlView_repeat_toggle_modes, repeatToggleModes);
+    currentPosition = C.TIME_UNSET;
+    currentBufferedPosition = C.TIME_UNSET;
   }
 
   /**
    * Returns the {@link Player} currently being controlled by this view, or null if no player is
    * set.
    */
+  @Nullable
   public Player getPlayer() {
     return player;
   }
@@ -373,9 +519,14 @@ public class PlayerControlView extends FrameLayout {
   /**
    * Sets the {@link Player} to control.
    *
-   * @param player The {@link Player} to control.
+   * @param player The {@link Player} to control, or {@code null} to detach the current player. Only
+   *     players which are accessed on the main thread are supported ({@code
+   *     player.getApplicationLooper() == Looper.getMainLooper()}).
    */
-  public void setPlayer(Player player) {
+  public void setPlayer(@Nullable Player player) {
+    Assertions.checkState(Looper.myLooper() == Looper.getMainLooper());
+    Assertions.checkArgument(
+        player == null || player.getApplicationLooper() == Looper.getMainLooper());
     if (this.player == player) {
       return;
     }
@@ -399,7 +550,7 @@ public class PlayerControlView extends FrameLayout {
    */
   public void setShowMultiWindowTimeBar(boolean showMultiWindowTimeBar) {
     this.showMultiWindowTimeBar = showMultiWindowTimeBar;
-    updateTimeBarMode();
+    updateTimeline();
   }
 
   /**
@@ -409,8 +560,8 @@ public class PlayerControlView extends FrameLayout {
    *
    * @param extraAdGroupTimesMs The millisecond timestamps of the extra ad markers to show, or
    *     {@code null} to show no extra ad markers.
-   * @param extraPlayedAdGroups Whether each ad has been played, or {@code null} to show no extra ad
-   *     markers.
+   * @param extraPlayedAdGroups Whether each ad has been played. Must be the same length as {@code
+   *     extraAdGroupTimesMs}, or {@code null} if {@code extraAdGroupTimesMs} is {@code null}.
    */
   public void setExtraAdGroupMarkers(
       @Nullable long[] extraAdGroupTimesMs, @Nullable boolean[] extraPlayedAdGroups) {
@@ -418,64 +569,79 @@ public class PlayerControlView extends FrameLayout {
       this.extraAdGroupTimesMs = new long[0];
       this.extraPlayedAdGroups = new boolean[0];
     } else {
+      extraPlayedAdGroups = Assertions.checkNotNull(extraPlayedAdGroups);
       Assertions.checkArgument(extraAdGroupTimesMs.length == extraPlayedAdGroups.length);
       this.extraAdGroupTimesMs = extraAdGroupTimesMs;
       this.extraPlayedAdGroups = extraPlayedAdGroups;
     }
-    updateProgress();
+    updateTimeline();
   }
 
   /**
-   * Sets the {@link VisibilityListener}.
+   * Adds a {@link VisibilityListener}.
    *
    * @param listener The listener to be notified about visibility changes.
    */
-  public void setVisibilityListener(VisibilityListener listener) {
-    this.visibilityListener = listener;
+  public void addVisibilityListener(VisibilityListener listener) {
+    Assertions.checkNotNull(listener);
+    visibilityListeners.add(listener);
   }
 
   /**
-   * Sets the {@link PlaybackPreparer}.
+   * Removes a {@link VisibilityListener}.
    *
-   * @param playbackPreparer The {@link PlaybackPreparer}.
+   * @param listener The listener to be removed.
    */
-  public void setPlaybackPreparer(@Nullable PlaybackPreparer playbackPreparer) {
-    this.playbackPreparer = playbackPreparer;
+  public void removeVisibilityListener(VisibilityListener listener) {
+    visibilityListeners.remove(listener);
   }
 
   /**
-   * Sets the {@link com.google.android.exoplayer2.ControlDispatcher}.
+   * Sets the {@link ProgressUpdateListener}.
    *
-   * @param controlDispatcher The {@link com.google.android.exoplayer2.ControlDispatcher}, or null
-   *     to use {@link com.google.android.exoplayer2.DefaultControlDispatcher}.
+   * @param listener The listener to be notified about when progress is updated.
    */
-  public void setControlDispatcher(
-      @Nullable com.google.android.exoplayer2.ControlDispatcher controlDispatcher) {
-    this.controlDispatcher =
-        controlDispatcher == null
-            ? new com.google.android.exoplayer2.DefaultControlDispatcher()
-            : controlDispatcher;
+  public void setProgressUpdateListener(@Nullable ProgressUpdateListener listener) {
+    this.progressUpdateListener = listener;
   }
 
   /**
-   * Sets the rewind increment in milliseconds.
+   * Sets whether the rewind button is shown.
    *
-   * @param rewindMs The rewind increment in milliseconds. A non-positive value will cause the
-   *     rewind button to be disabled.
+   * @param showRewindButton Whether the rewind button is shown.
    */
-  public void setRewindIncrementMs(int rewindMs) {
-    this.rewindMs = rewindMs;
+  public void setShowRewindButton(boolean showRewindButton) {
+    this.showRewindButton = showRewindButton;
     updateNavigation();
   }
 
   /**
-   * Sets the fast forward increment in milliseconds.
+   * Sets whether the fast forward button is shown.
    *
-   * @param fastForwardMs The fast forward increment in milliseconds. A non-positive value will
-   *     cause the fast forward button to be disabled.
+   * @param showFastForwardButton Whether the fast forward button is shown.
    */
-  public void setFastForwardIncrementMs(int fastForwardMs) {
-    this.fastForwardMs = fastForwardMs;
+  public void setShowFastForwardButton(boolean showFastForwardButton) {
+    this.showFastForwardButton = showFastForwardButton;
+    updateNavigation();
+  }
+
+  /**
+   * Sets whether the previous button is shown.
+   *
+   * @param showPreviousButton Whether the previous button is shown.
+   */
+  public void setShowPreviousButton(boolean showPreviousButton) {
+    this.showPreviousButton = showPreviousButton;
+    updateNavigation();
+  }
+
+  /**
+   * Sets whether the next button is shown.
+   *
+   * @param showNextButton Whether the next button is shown.
+   */
+  public void setShowNextButton(boolean showNextButton) {
+    this.showNextButton = showNextButton;
     updateNavigation();
   }
 
@@ -525,15 +691,16 @@ public class PlayerControlView extends FrameLayout {
       @Player.RepeatMode int currentMode = player.getRepeatMode();
       if (repeatToggleModes == RepeatModeUtil.REPEAT_TOGGLE_MODE_NONE
           && currentMode != Player.REPEAT_MODE_OFF) {
-        controlDispatcher.dispatchSetRepeatMode(player, Player.REPEAT_MODE_OFF);
+        player.setRepeatMode(Player.REPEAT_MODE_OFF);
       } else if (repeatToggleModes == RepeatModeUtil.REPEAT_TOGGLE_MODE_ONE
           && currentMode == Player.REPEAT_MODE_ALL) {
-        controlDispatcher.dispatchSetRepeatMode(player, Player.REPEAT_MODE_ONE);
+        player.setRepeatMode(Player.REPEAT_MODE_ONE);
       } else if (repeatToggleModes == RepeatModeUtil.REPEAT_TOGGLE_MODE_ALL
           && currentMode == Player.REPEAT_MODE_ONE) {
-        controlDispatcher.dispatchSetRepeatMode(player, Player.REPEAT_MODE_ALL);
+        player.setRepeatMode(Player.REPEAT_MODE_ALL);
       }
     }
+    updateRepeatModeButton();
   }
 
   /** Returns whether the shuffle button is shown. */
@@ -551,6 +718,50 @@ public class PlayerControlView extends FrameLayout {
     updateShuffleButton();
   }
 
+  /** Returns whether the VR button is shown. */
+  public boolean getShowVrButton() {
+    return vrButton != null && vrButton.getVisibility() == VISIBLE;
+  }
+
+  /**
+   * Sets whether the VR button is shown.
+   *
+   * @param showVrButton Whether the VR button is shown.
+   */
+  public void setShowVrButton(boolean showVrButton) {
+    if (vrButton != null) {
+      vrButton.setVisibility(showVrButton ? VISIBLE : GONE);
+    }
+  }
+
+  /**
+   * Sets listener for the VR button.
+   *
+   * @param onClickListener Listener for the VR button, or null to clear the listener.
+   */
+  public void setVrButtonListener(@Nullable OnClickListener onClickListener) {
+    if (vrButton != null) {
+      vrButton.setOnClickListener(onClickListener);
+      updateButton(getShowVrButton(), onClickListener != null, vrButton);
+    }
+  }
+
+  /**
+   * Sets the minimum interval between time bar position updates.
+   *
+   * <p>Note that smaller intervals, e.g. 33ms, will result in a smooth movement but will use more
+   * CPU resources while the time bar is visible, whereas larger intervals, e.g. 200ms, will result
+   * in a step-wise update with less CPU usage.
+   *
+   * @param minUpdateIntervalMs The minimum interval between time bar position updates, in
+   *     milliseconds.
+   */
+  public void setTimeBarMinUpdateInterval(int minUpdateIntervalMs) {
+    // Do not accept values below 16ms (60fps) and larger than the maximum update interval.
+    timeBarMinUpdateIntervalMs =
+        Util.constrainValue(minUpdateIntervalMs, 16, MAX_UPDATE_INTERVAL_MS);
+  }
+
   /**
    * Shows the playback controls. If {@link #getShowTimeoutMs()} is positive then the controls will
    * be automatically hidden after this duration of time has elapsed without user input.
@@ -558,11 +769,12 @@ public class PlayerControlView extends FrameLayout {
   public void show() {
     if (!isVisible()) {
       setVisibility(VISIBLE);
-      if (visibilityListener != null) {
+      for (VisibilityListener visibilityListener : visibilityListeners) {
         visibilityListener.onVisibilityChange(getVisibility());
       }
       updateAll();
       requestPlayPauseFocus();
+      requestPlayPauseAccessibilityFocus();
     }
     // Call hideAfterTimeout even if already visible to reset the timeout.
     hideAfterTimeout();
@@ -572,7 +784,7 @@ public class PlayerControlView extends FrameLayout {
   public void hide() {
     if (isVisible()) {
       setVisibility(GONE);
-      if (visibilityListener != null) {
+      for (VisibilityListener visibilityListener : visibilityListeners) {
         visibilityListener.onVisibilityChange(getVisibility());
       }
       removeCallbacks(updateProgressAction);
@@ -603,7 +815,7 @@ public class PlayerControlView extends FrameLayout {
     updateNavigation();
     updateRepeatModeButton();
     updateShuffleButton();
-    updateProgress();
+    updateTimeline();
   }
 
   private void updatePlayPauseButton() {
@@ -611,17 +823,29 @@ public class PlayerControlView extends FrameLayout {
       return;
     }
     boolean requestPlayPauseFocus = false;
-    boolean playing = isPlaying();
+    boolean requestPlayPauseAccessibilityFocus = false;
+    boolean shouldShowPauseButton = shouldShowPauseButton();
     if (playButton != null) {
-      requestPlayPauseFocus |= playing && playButton.isFocused();
-      playButton.setVisibility(playing ? View.GONE : View.VISIBLE);
+      requestPlayPauseFocus |= shouldShowPauseButton && playButton.isFocused();
+      requestPlayPauseAccessibilityFocus |=
+          Util.SDK_INT < 21
+              ? requestPlayPauseFocus
+              : (shouldShowPauseButton && Api21.isAccessibilityFocused(playButton));
+      playButton.setVisibility(shouldShowPauseButton ? GONE : VISIBLE);
     }
     if (pauseButton != null) {
-      requestPlayPauseFocus |= !playing && pauseButton.isFocused();
-      pauseButton.setVisibility(!playing ? View.GONE : View.VISIBLE);
+      requestPlayPauseFocus |= !shouldShowPauseButton && pauseButton.isFocused();
+      requestPlayPauseAccessibilityFocus |=
+          Util.SDK_INT < 21
+              ? requestPlayPauseFocus
+              : (!shouldShowPauseButton && Api21.isAccessibilityFocused(pauseButton));
+      pauseButton.setVisibility(shouldShowPauseButton ? VISIBLE : GONE);
     }
     if (requestPlayPauseFocus) {
       requestPlayPauseFocus();
+    }
+    if (requestPlayPauseAccessibilityFocus) {
+      requestPlayPauseAccessibilityFocus();
     }
   }
 
@@ -629,25 +853,27 @@ public class PlayerControlView extends FrameLayout {
     if (!isVisible() || !isAttachedToWindow) {
       return;
     }
-    Timeline timeline = player != null ? player.getCurrentTimeline() : null;
-    boolean haveNonEmptyTimeline = timeline != null && !timeline.isEmpty();
-    boolean isSeekable = false;
+
+    @Nullable Player player = this.player;
+    boolean enableSeeking = false;
     boolean enablePrevious = false;
+    boolean enableRewind = false;
+    boolean enableFastForward = false;
     boolean enableNext = false;
-    if (haveNonEmptyTimeline && !player.isPlayingAd()) {
-      int windowIndex = player.getCurrentWindowIndex();
-      timeline.getWindow(windowIndex, window);
-      isSeekable = window.isSeekable;
-      enablePrevious =
-          isSeekable || !window.isDynamic || player.getPreviousWindowIndex() != C.INDEX_UNSET;
-      enableNext = window.isDynamic || player.getNextWindowIndex() != C.INDEX_UNSET;
+    if (player != null) {
+      enableSeeking = player.isCommandAvailable(COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM);
+      enablePrevious = player.isCommandAvailable(COMMAND_SEEK_TO_PREVIOUS);
+      enableRewind = player.isCommandAvailable(COMMAND_SEEK_BACK);
+      enableFastForward = player.isCommandAvailable(COMMAND_SEEK_FORWARD);
+      enableNext = player.isCommandAvailable(COMMAND_SEEK_TO_NEXT);
     }
-    setButtonEnabled(enablePrevious, previousButton);
-    setButtonEnabled(enableNext, nextButton);
-    setButtonEnabled(fastForwardMs > 0 && isSeekable, fastForwardButton);
-    setButtonEnabled(rewindMs > 0 && isSeekable, rewindButton);
+
+    updateButton(showPreviousButton, enablePrevious, previousButton);
+    updateButton(showRewindButton, enableRewind, rewindButton);
+    updateButton(showFastForwardButton, enableFastForward, fastForwardButton);
+    updateButton(showNextButton, enableNext, nextButton);
     if (timeBar != null) {
-      timeBar.setEnabled(isSeekable);
+      timeBar.setEnabled(enableSeeking);
     }
   }
 
@@ -655,15 +881,21 @@ public class PlayerControlView extends FrameLayout {
     if (!isVisible() || !isAttachedToWindow || repeatToggleButton == null) {
       return;
     }
+
     if (repeatToggleModes == RepeatModeUtil.REPEAT_TOGGLE_MODE_NONE) {
-      repeatToggleButton.setVisibility(View.GONE);
+      updateButton(/* visible= */ false, /* enabled= */ false, repeatToggleButton);
       return;
     }
+
+    @Nullable Player player = this.player;
     if (player == null) {
-      setButtonEnabled(false, repeatToggleButton);
+      updateButton(/* visible= */ true, /* enabled= */ false, repeatToggleButton);
+      repeatToggleButton.setImageDrawable(repeatOffButtonDrawable);
+      repeatToggleButton.setContentDescription(repeatOffButtonContentDescription);
       return;
     }
-    setButtonEnabled(true, repeatToggleButton);
+
+    updateButton(/* visible= */ true, /* enabled= */ true, repeatToggleButton);
     switch (player.getRepeatMode()) {
       case Player.REPEAT_MODE_OFF:
         repeatToggleButton.setImageDrawable(repeatOffButtonDrawable);
@@ -680,30 +912,102 @@ public class PlayerControlView extends FrameLayout {
       default:
         // Never happens.
     }
-    repeatToggleButton.setVisibility(View.VISIBLE);
+    repeatToggleButton.setVisibility(VISIBLE);
   }
 
   private void updateShuffleButton() {
     if (!isVisible() || !isAttachedToWindow || shuffleButton == null) {
       return;
     }
+
+    @Nullable Player player = this.player;
     if (!showShuffleButton) {
-      shuffleButton.setVisibility(View.GONE);
+      updateButton(/* visible= */ false, /* enabled= */ false, shuffleButton);
     } else if (player == null) {
-      setButtonEnabled(false, shuffleButton);
+      updateButton(/* visible= */ true, /* enabled= */ false, shuffleButton);
+      shuffleButton.setImageDrawable(shuffleOffButtonDrawable);
+      shuffleButton.setContentDescription(shuffleOffContentDescription);
     } else {
-      shuffleButton.setAlpha(player.getShuffleModeEnabled() ? 1f : 0.3f);
-      shuffleButton.setEnabled(true);
-      shuffleButton.setVisibility(View.VISIBLE);
+      updateButton(/* visible= */ true, /* enabled= */ true, shuffleButton);
+      shuffleButton.setImageDrawable(
+          player.getShuffleModeEnabled() ? shuffleOnButtonDrawable : shuffleOffButtonDrawable);
+      shuffleButton.setContentDescription(
+          player.getShuffleModeEnabled()
+              ? shuffleOnContentDescription
+              : shuffleOffContentDescription);
     }
   }
 
-  private void updateTimeBarMode() {
+  private void updateTimeline() {
+    @Nullable Player player = this.player;
     if (player == null) {
       return;
     }
     multiWindowTimeBar =
         showMultiWindowTimeBar && canShowMultiWindowTimeBar(player.getCurrentTimeline(), window);
+    currentWindowOffset = 0;
+    long durationUs = 0;
+    int adGroupCount = 0;
+    Timeline timeline = player.getCurrentTimeline();
+    if (!timeline.isEmpty()) {
+      int currentWindowIndex = player.getCurrentMediaItemIndex();
+      int firstWindowIndex = multiWindowTimeBar ? 0 : currentWindowIndex;
+      int lastWindowIndex = multiWindowTimeBar ? timeline.getWindowCount() - 1 : currentWindowIndex;
+      for (int i = firstWindowIndex; i <= lastWindowIndex; i++) {
+        if (i == currentWindowIndex) {
+          currentWindowOffset = Util.usToMs(durationUs);
+        }
+        timeline.getWindow(i, window);
+        if (window.durationUs == C.TIME_UNSET) {
+          Assertions.checkState(!multiWindowTimeBar);
+          break;
+        }
+        for (int j = window.firstPeriodIndex; j <= window.lastPeriodIndex; j++) {
+          timeline.getPeriod(j, period);
+          int removedGroups = period.getRemovedAdGroupCount();
+          int totalGroups = period.getAdGroupCount();
+          for (int adGroupIndex = removedGroups; adGroupIndex < totalGroups; adGroupIndex++) {
+            long adGroupTimeInPeriodUs = period.getAdGroupTimeUs(adGroupIndex);
+            if (adGroupTimeInPeriodUs == C.TIME_END_OF_SOURCE) {
+              if (period.durationUs == C.TIME_UNSET) {
+                // Don't show ad markers for postrolls in periods with unknown duration.
+                continue;
+              }
+              adGroupTimeInPeriodUs = period.durationUs;
+            }
+            long adGroupTimeInWindowUs = adGroupTimeInPeriodUs + period.getPositionInWindowUs();
+            if (adGroupTimeInWindowUs >= 0) {
+              if (adGroupCount == adGroupTimesMs.length) {
+                int newLength = adGroupTimesMs.length == 0 ? 1 : adGroupTimesMs.length * 2;
+                adGroupTimesMs = Arrays.copyOf(adGroupTimesMs, newLength);
+                playedAdGroups = Arrays.copyOf(playedAdGroups, newLength);
+              }
+              adGroupTimesMs[adGroupCount] = Util.usToMs(durationUs + adGroupTimeInWindowUs);
+              playedAdGroups[adGroupCount] = period.hasPlayedAdGroup(adGroupIndex);
+              adGroupCount++;
+            }
+          }
+        }
+        durationUs += window.durationUs;
+      }
+    }
+    long durationMs = Util.usToMs(durationUs);
+    if (durationView != null) {
+      durationView.setText(Util.getStringForTime(formatBuilder, formatter, durationMs));
+    }
+    if (timeBar != null) {
+      timeBar.setDuration(durationMs);
+      int extraAdGroupCount = extraAdGroupTimesMs.length;
+      int totalAdGroupCount = adGroupCount + extraAdGroupCount;
+      if (totalAdGroupCount > adGroupTimesMs.length) {
+        adGroupTimesMs = Arrays.copyOf(adGroupTimesMs, totalAdGroupCount);
+        playedAdGroups = Arrays.copyOf(playedAdGroups, totalAdGroupCount);
+      }
+      System.arraycopy(extraAdGroupTimesMs, 0, adGroupTimesMs, adGroupCount, extraAdGroupCount);
+      System.arraycopy(extraPlayedAdGroups, 0, playedAdGroups, adGroupCount, extraAdGroupCount);
+      timeBar.setAdGroupTimesMs(adGroupTimesMs, playedAdGroups, totalAdGroupCount);
+    }
+    updateProgress();
   }
 
   private void updateProgress() {
@@ -711,199 +1015,83 @@ public class PlayerControlView extends FrameLayout {
       return;
     }
 
+    @Nullable Player player = this.player;
     long position = 0;
     long bufferedPosition = 0;
-    long duration = 0;
     if (player != null) {
-      long currentWindowTimeBarOffsetUs = 0;
-      long durationUs = 0;
-      int adGroupCount = 0;
-      Timeline timeline = player.getCurrentTimeline();
-      if (!timeline.isEmpty()) {
-        int currentWindowIndex = player.getCurrentWindowIndex();
-        int firstWindowIndex = multiWindowTimeBar ? 0 : currentWindowIndex;
-        int lastWindowIndex =
-            multiWindowTimeBar ? timeline.getWindowCount() - 1 : currentWindowIndex;
-        for (int i = firstWindowIndex; i <= lastWindowIndex; i++) {
-          if (i == currentWindowIndex) {
-            currentWindowTimeBarOffsetUs = durationUs;
-          }
-          timeline.getWindow(i, window);
-          if (window.durationUs == C.TIME_UNSET) {
-            Assertions.checkState(!multiWindowTimeBar);
-            break;
-          }
-          for (int j = window.firstPeriodIndex; j <= window.lastPeriodIndex; j++) {
-            timeline.getPeriod(j, period);
-            int periodAdGroupCount = period.getAdGroupCount();
-            for (int adGroupIndex = 0; adGroupIndex < periodAdGroupCount; adGroupIndex++) {
-              long adGroupTimeInPeriodUs = period.getAdGroupTimeUs(adGroupIndex);
-              if (adGroupTimeInPeriodUs == C.TIME_END_OF_SOURCE) {
-                if (period.durationUs == C.TIME_UNSET) {
-                  // Don't show ad markers for postrolls in periods with unknown duration.
-                  continue;
-                }
-                adGroupTimeInPeriodUs = period.durationUs;
-              }
-              long adGroupTimeInWindowUs = adGroupTimeInPeriodUs + period.getPositionInWindowUs();
-              if (adGroupTimeInWindowUs >= 0 && adGroupTimeInWindowUs <= window.durationUs) {
-                if (adGroupCount == adGroupTimesMs.length) {
-                  int newLength = adGroupTimesMs.length == 0 ? 1 : adGroupTimesMs.length * 2;
-                  adGroupTimesMs = Arrays.copyOf(adGroupTimesMs, newLength);
-                  playedAdGroups = Arrays.copyOf(playedAdGroups, newLength);
-                }
-                adGroupTimesMs[adGroupCount] = C.usToMs(durationUs + adGroupTimeInWindowUs);
-                playedAdGroups[adGroupCount] = period.hasPlayedAdGroup(adGroupIndex);
-                adGroupCount++;
-              }
-            }
-          }
-          durationUs += window.durationUs;
-        }
-      }
-      duration = C.usToMs(durationUs);
-      position = C.usToMs(currentWindowTimeBarOffsetUs);
-      bufferedPosition = position;
-      if (player.isPlayingAd()) {
-        position += player.getContentPosition();
-        bufferedPosition = position;
-      } else {
-        position += player.getCurrentPosition();
-        bufferedPosition += player.getBufferedPosition();
-      }
-      if (timeBar != null) {
-        int extraAdGroupCount = extraAdGroupTimesMs.length;
-        int totalAdGroupCount = adGroupCount + extraAdGroupCount;
-        if (totalAdGroupCount > adGroupTimesMs.length) {
-          adGroupTimesMs = Arrays.copyOf(adGroupTimesMs, totalAdGroupCount);
-          playedAdGroups = Arrays.copyOf(playedAdGroups, totalAdGroupCount);
-        }
-        System.arraycopy(extraAdGroupTimesMs, 0, adGroupTimesMs, adGroupCount, extraAdGroupCount);
-        System.arraycopy(extraPlayedAdGroups, 0, playedAdGroups, adGroupCount, extraAdGroupCount);
-        timeBar.setAdGroupTimesMs(adGroupTimesMs, playedAdGroups, totalAdGroupCount);
-      }
+      position = currentWindowOffset + player.getContentPosition();
+      bufferedPosition = currentWindowOffset + player.getContentBufferedPosition();
     }
-    if (durationView != null) {
-      durationView.setText(Util.getStringForTime(formatBuilder, formatter, duration));
-    }
-    if (positionView != null && !scrubbing) {
+    boolean positionChanged = position != currentPosition;
+    boolean bufferedPositionChanged = bufferedPosition != currentBufferedPosition;
+    currentPosition = position;
+    currentBufferedPosition = bufferedPosition;
+
+    // Only update the TextView if the position has changed, else TalkBack will repeatedly read the
+    // same position to the user.
+    if (positionView != null && !scrubbing && positionChanged) {
       positionView.setText(Util.getStringForTime(formatBuilder, formatter, position));
     }
     if (timeBar != null) {
       timeBar.setPosition(position);
       timeBar.setBufferedPosition(bufferedPosition);
-      timeBar.setDuration(duration);
+    }
+    if (progressUpdateListener != null && (positionChanged || bufferedPositionChanged)) {
+      progressUpdateListener.onProgressUpdate(position, bufferedPosition);
     }
 
     // Cancel any pending updates and schedule a new one if necessary.
     removeCallbacks(updateProgressAction);
     int playbackState = player == null ? Player.STATE_IDLE : player.getPlaybackState();
-    if (playbackState != Player.STATE_IDLE && playbackState != Player.STATE_ENDED) {
-      long delayMs;
-      if (player.getPlayWhenReady() && playbackState == Player.STATE_READY) {
-        float playbackSpeed = player.getPlaybackParameters().speed;
-        if (playbackSpeed <= 0.1f) {
-          delayMs = 1000;
-        } else if (playbackSpeed <= 5f) {
-          long mediaTimeUpdatePeriodMs = 1000 / Math.max(1, Math.round(1 / playbackSpeed));
-          long mediaTimeDelayMs = mediaTimeUpdatePeriodMs - (position % mediaTimeUpdatePeriodMs);
-          if (mediaTimeDelayMs < (mediaTimeUpdatePeriodMs / 5)) {
-            mediaTimeDelayMs += mediaTimeUpdatePeriodMs;
-          }
-          delayMs =
-              playbackSpeed == 1 ? mediaTimeDelayMs : (long) (mediaTimeDelayMs / playbackSpeed);
-        } else {
-          delayMs = 200;
-        }
-      } else {
-        delayMs = 1000;
-      }
+    if (player != null && player.isPlaying()) {
+      long mediaTimeDelayMs =
+          timeBar != null ? timeBar.getPreferredUpdateDelay() : MAX_UPDATE_INTERVAL_MS;
+
+      // Limit delay to the start of the next full second to ensure position display is smooth.
+      long mediaTimeUntilNextFullSecondMs = 1000 - position % 1000;
+      mediaTimeDelayMs = Math.min(mediaTimeDelayMs, mediaTimeUntilNextFullSecondMs);
+
+      // Calculate the delay until the next update in real time, taking playback speed into account.
+      float playbackSpeed = player.getPlaybackParameters().speed;
+      long delayMs =
+          playbackSpeed > 0 ? (long) (mediaTimeDelayMs / playbackSpeed) : MAX_UPDATE_INTERVAL_MS;
+
+      // Constrain the delay to avoid too frequent / infrequent updates.
+      delayMs = Util.constrainValue(delayMs, timeBarMinUpdateIntervalMs, MAX_UPDATE_INTERVAL_MS);
       postDelayed(updateProgressAction, delayMs);
+    } else if (playbackState != Player.STATE_ENDED && playbackState != Player.STATE_IDLE) {
+      postDelayed(updateProgressAction, MAX_UPDATE_INTERVAL_MS);
     }
   }
 
   private void requestPlayPauseFocus() {
-    boolean playing = isPlaying();
-    if (!playing && playButton != null) {
+    boolean shouldShowPauseButton = shouldShowPauseButton();
+    if (!shouldShowPauseButton && playButton != null) {
       playButton.requestFocus();
-    } else if (playing && pauseButton != null) {
+    } else if (shouldShowPauseButton && pauseButton != null) {
       pauseButton.requestFocus();
     }
   }
 
-  private void setButtonEnabled(boolean enabled, View view) {
+  private void requestPlayPauseAccessibilityFocus() {
+    boolean shouldShowPauseButton = shouldShowPauseButton();
+    if (!shouldShowPauseButton && playButton != null) {
+      playButton.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED);
+    } else if (shouldShowPauseButton && pauseButton != null) {
+      pauseButton.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED);
+    }
+  }
+
+  private void updateButton(boolean visible, boolean enabled, @Nullable View view) {
     if (view == null) {
       return;
     }
     view.setEnabled(enabled);
-    view.setAlpha(enabled ? 1f : 0.3f);
-    view.setVisibility(VISIBLE);
+    view.setAlpha(enabled ? buttonAlphaEnabled : buttonAlphaDisabled);
+    view.setVisibility(visible ? VISIBLE : GONE);
   }
 
-  private void previous() {
-    Timeline timeline = player.getCurrentTimeline();
-    if (timeline.isEmpty()) {
-      return;
-    }
-    int windowIndex = player.getCurrentWindowIndex();
-    timeline.getWindow(windowIndex, window);
-    int previousWindowIndex = player.getPreviousWindowIndex();
-    if (previousWindowIndex != C.INDEX_UNSET
-        && (player.getCurrentPosition() <= MAX_POSITION_FOR_SEEK_TO_PREVIOUS
-            || (window.isDynamic && !window.isSeekable))) {
-      seekTo(previousWindowIndex, C.TIME_UNSET);
-    } else {
-      seekTo(0);
-    }
-  }
-
-  private void next() {
-    Timeline timeline = player.getCurrentTimeline();
-    if (timeline.isEmpty()) {
-      return;
-    }
-    int windowIndex = player.getCurrentWindowIndex();
-    int nextWindowIndex = player.getNextWindowIndex();
-    if (nextWindowIndex != C.INDEX_UNSET) {
-      seekTo(nextWindowIndex, C.TIME_UNSET);
-    } else if (timeline.getWindow(windowIndex, window, false).isDynamic) {
-      seekTo(windowIndex, C.TIME_UNSET);
-    }
-  }
-
-  private void rewind() {
-    if (rewindMs <= 0) {
-      return;
-    }
-    seekTo(Math.max(player.getCurrentPosition() - rewindMs, 0));
-  }
-
-  private void fastForward() {
-    if (fastForwardMs <= 0) {
-      return;
-    }
-    long durationMs = player.getDuration();
-    long seekPositionMs = player.getCurrentPosition() + fastForwardMs;
-    if (durationMs != C.TIME_UNSET) {
-      seekPositionMs = Math.min(seekPositionMs, durationMs);
-    }
-    seekTo(seekPositionMs);
-  }
-
-  private void seekTo(long positionMs) {
-    seekTo(player.getCurrentWindowIndex(), positionMs);
-  }
-
-  private void seekTo(int windowIndex, long positionMs) {
-    boolean dispatched = controlDispatcher.dispatchSeekTo(player, windowIndex, positionMs);
-    if (!dispatched) {
-      // The seek wasn't dispatched. If the progress bar was dragged by the user to perform the
-      // seek then it'll now be in the wrong position. Trigger a progress update to snap it back.
-      updateProgress();
-    }
-  }
-
-  private void seekToTimeBarPosition(long positionMs) {
+  private void seekToTimeBarPosition(Player player, long positionMs) {
     int windowIndex;
     Timeline timeline = player.getCurrentTimeline();
     if (multiWindowTimeBar && !timeline.isEmpty()) {
@@ -922,9 +1110,14 @@ public class PlayerControlView extends FrameLayout {
         windowIndex++;
       }
     } else {
-      windowIndex = player.getCurrentWindowIndex();
+      windowIndex = player.getCurrentMediaItemIndex();
     }
-    seekTo(windowIndex, positionMs);
+    seekTo(player, windowIndex, positionMs);
+    updateProgress();
+  }
+
+  private void seekTo(Player player, int windowIndex, long positionMs) {
+    player.seekTo(windowIndex, positionMs);
   }
 
   @Override
@@ -953,6 +1146,16 @@ public class PlayerControlView extends FrameLayout {
   }
 
   @Override
+  public final boolean dispatchTouchEvent(MotionEvent ev) {
+    if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+      removeCallbacks(hideAction);
+    } else if (ev.getAction() == MotionEvent.ACTION_UP) {
+      hideAfterTimeout();
+    }
+    return super.dispatchTouchEvent(ev);
+  }
+
+  @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
     return dispatchMediaKeyEvent(event) || super.dispatchKeyEvent(event);
   }
@@ -966,30 +1169,34 @@ public class PlayerControlView extends FrameLayout {
    */
   public boolean dispatchMediaKeyEvent(KeyEvent event) {
     int keyCode = event.getKeyCode();
+    @Nullable Player player = this.player;
     if (player == null || !isHandledMediaKey(keyCode)) {
       return false;
     }
     if (event.getAction() == KeyEvent.ACTION_DOWN) {
       if (keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
-        fastForward();
+        if (player.getPlaybackState() != Player.STATE_ENDED) {
+          player.seekForward();
+        }
       } else if (keyCode == KeyEvent.KEYCODE_MEDIA_REWIND) {
-        rewind();
+        player.seekBack();
       } else if (event.getRepeatCount() == 0) {
         switch (keyCode) {
           case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-            controlDispatcher.dispatchSetPlayWhenReady(player, !player.getPlayWhenReady());
+          case KeyEvent.KEYCODE_HEADSETHOOK:
+            dispatchPlayPause(player);
             break;
           case KeyEvent.KEYCODE_MEDIA_PLAY:
-            controlDispatcher.dispatchSetPlayWhenReady(player, true);
+            dispatchPlay(player);
             break;
           case KeyEvent.KEYCODE_MEDIA_PAUSE:
-            controlDispatcher.dispatchSetPlayWhenReady(player, false);
+            dispatchPause(player);
             break;
           case KeyEvent.KEYCODE_MEDIA_NEXT:
-            next();
+            player.seekToNext();
             break;
           case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
-            previous();
+            player.seekToPrevious();
             break;
           default:
             break;
@@ -999,11 +1206,34 @@ public class PlayerControlView extends FrameLayout {
     return true;
   }
 
-  private boolean isPlaying() {
+  private boolean shouldShowPauseButton() {
     return player != null
         && player.getPlaybackState() != Player.STATE_ENDED
         && player.getPlaybackState() != Player.STATE_IDLE
         && player.getPlayWhenReady();
+  }
+
+  private void dispatchPlayPause(Player player) {
+    @State int state = player.getPlaybackState();
+    if (state == Player.STATE_IDLE || state == Player.STATE_ENDED || !player.getPlayWhenReady()) {
+      dispatchPlay(player);
+    } else {
+      dispatchPause(player);
+    }
+  }
+
+  private void dispatchPlay(Player player) {
+    @State int state = player.getPlaybackState();
+    if (state == Player.STATE_IDLE) {
+      player.prepare();
+    } else if (state == Player.STATE_ENDED) {
+      seekTo(player, player.getCurrentMediaItemIndex(), C.TIME_UNSET);
+    }
+    player.play();
+  }
+
+  private void dispatchPause(Player player) {
+    player.pause();
   }
 
   @SuppressLint("InlinedApi")
@@ -1011,6 +1241,7 @@ public class PlayerControlView extends FrameLayout {
     return keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
         || keyCode == KeyEvent.KEYCODE_MEDIA_REWIND
         || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+        || keyCode == KeyEvent.KEYCODE_HEADSETHOOK
         || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY
         || keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE
         || keyCode == KeyEvent.KEYCODE_MEDIA_NEXT
@@ -1037,13 +1268,49 @@ public class PlayerControlView extends FrameLayout {
     return true;
   }
 
-  private final class ComponentListener extends Player.DefaultEventListener
-      implements TimeBar.OnScrubListener, OnClickListener {
+  @SuppressWarnings("ResourceType")
+  private static @RepeatModeUtil.RepeatToggleModes int getRepeatToggleModes(
+      TypedArray a, @RepeatModeUtil.RepeatToggleModes int defaultValue) {
+    return a.getInt(R.styleable.PlayerControlView_repeat_toggle_modes, defaultValue);
+  }
+
+  private final class ComponentListener
+      implements Player.Listener, TimeBar.OnScrubListener, OnClickListener {
+
+    @Override
+    public void onEvents(Player player, Events events) {
+      if (events.containsAny(EVENT_PLAYBACK_STATE_CHANGED, EVENT_PLAY_WHEN_READY_CHANGED)) {
+        updatePlayPauseButton();
+      }
+      if (events.containsAny(
+          EVENT_PLAYBACK_STATE_CHANGED, EVENT_PLAY_WHEN_READY_CHANGED, EVENT_IS_PLAYING_CHANGED)) {
+        updateProgress();
+      }
+      if (events.contains(EVENT_REPEAT_MODE_CHANGED)) {
+        updateRepeatModeButton();
+      }
+      if (events.contains(EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) {
+        updateShuffleButton();
+      }
+      if (events.containsAny(
+          EVENT_REPEAT_MODE_CHANGED,
+          EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+          EVENT_POSITION_DISCONTINUITY,
+          EVENT_TIMELINE_CHANGED,
+          EVENT_AVAILABLE_COMMANDS_CHANGED)) {
+        updateNavigation();
+      }
+      if (events.containsAny(EVENT_POSITION_DISCONTINUITY, EVENT_TIMELINE_CHANGED)) {
+        updateTimeline();
+      }
+    }
 
     @Override
     public void onScrubStart(TimeBar timeBar, long position) {
-      removeCallbacks(hideAction);
       scrubbing = true;
+      if (positionView != null) {
+        positionView.setText(Util.getStringForTime(formatBuilder, formatter, position));
+      }
     }
 
     @Override
@@ -1057,73 +1324,44 @@ public class PlayerControlView extends FrameLayout {
     public void onScrubStop(TimeBar timeBar, long position, boolean canceled) {
       scrubbing = false;
       if (!canceled && player != null) {
-        seekToTimeBarPosition(position);
+        seekToTimeBarPosition(player, position);
       }
-      hideAfterTimeout();
-    }
-
-    @Override
-    public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
-      updatePlayPauseButton();
-      updateProgress();
-    }
-
-    @Override
-    public void onRepeatModeChanged(int repeatMode) {
-      updateRepeatModeButton();
-      updateNavigation();
-    }
-
-    @Override
-    public void onShuffleModeEnabledChanged(boolean shuffleModeEnabled) {
-      updateShuffleButton();
-      updateNavigation();
-    }
-
-    @Override
-    public void onPositionDiscontinuity(@Player.DiscontinuityReason int reason) {
-      updateNavigation();
-      updateProgress();
-    }
-
-    @Override
-    public void onTimelineChanged(
-        Timeline timeline, Object manifest, @Player.TimelineChangeReason int reason) {
-      updateNavigation();
-      updateTimeBarMode();
-      updateProgress();
     }
 
     @Override
     public void onClick(View view) {
-      if (player != null) {
-        if (nextButton == view) {
-          next();
-        } else if (previousButton == view) {
-          previous();
-        } else if (fastForwardButton == view) {
-          fastForward();
-        } else if (rewindButton == view) {
-          rewind();
-        } else if (playButton == view) {
-          if (player.getPlaybackState() == Player.STATE_IDLE) {
-            if (playbackPreparer != null) {
-              playbackPreparer.preparePlayback();
-            }
-          } else if (player.getPlaybackState() == Player.STATE_ENDED) {
-            controlDispatcher.dispatchSeekTo(player, player.getCurrentWindowIndex(), C.TIME_UNSET);
-          }
-          controlDispatcher.dispatchSetPlayWhenReady(player, true);
-        } else if (pauseButton == view) {
-          controlDispatcher.dispatchSetPlayWhenReady(player, false);
-        } else if (repeatToggleButton == view) {
-          controlDispatcher.dispatchSetRepeatMode(
-              player, RepeatModeUtil.getNextRepeatMode(player.getRepeatMode(), repeatToggleModes));
-        } else if (shuffleButton == view) {
-          controlDispatcher.dispatchSetShuffleModeEnabled(player, !player.getShuffleModeEnabled());
-        }
+      Player player = PlayerControlView.this.player;
+      if (player == null) {
+        return;
       }
-      hideAfterTimeout();
+      if (nextButton == view) {
+        player.seekToNext();
+      } else if (previousButton == view) {
+        player.seekToPrevious();
+      } else if (fastForwardButton == view) {
+        if (player.getPlaybackState() != Player.STATE_ENDED) {
+          player.seekForward();
+        }
+      } else if (rewindButton == view) {
+        player.seekBack();
+      } else if (playButton == view) {
+        dispatchPlay(player);
+      } else if (pauseButton == view) {
+        dispatchPause(player);
+      } else if (repeatToggleButton == view) {
+        player.setRepeatMode(
+            RepeatModeUtil.getNextRepeatMode(player.getRepeatMode(), repeatToggleModes));
+      } else if (shuffleButton == view) {
+        player.setShuffleModeEnabled(!player.getShuffleModeEnabled());
+      }
+    }
+  }
+
+  @RequiresApi(21)
+  private static final class Api21 {
+    @DoNotInline
+    public static boolean isAccessibilityFocused(View view) {
+      return view.isAccessibilityFocused();
     }
   }
 }

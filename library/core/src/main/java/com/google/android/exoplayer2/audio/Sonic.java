@@ -16,20 +16,23 @@
  */
 package com.google.android.exoplayer2.audio;
 
+import static java.lang.Math.min;
+
 import com.google.android.exoplayer2.util.Assertions;
 import java.nio.ShortBuffer;
 import java.util.Arrays;
 
 /**
  * Sonic audio stream processor for time/pitch stretching.
- * <p>
- * Based on https://github.com/waywardgeek/sonic.
+ *
+ * <p>Based on https://github.com/waywardgeek/sonic.
  */
 /* package */ final class Sonic {
 
   private static final int MINIMUM_PITCH = 65;
   private static final int MAXIMUM_PITCH = 400;
   private static final int AMDF_FREQUENCY = 4000;
+  private static final int BYTES_PER_SAMPLE = 2;
 
   private final int inputSampleRateHz;
   private final int channelCount;
@@ -81,6 +84,14 @@ import java.util.Arrays;
   }
 
   /**
+   * Returns the number of bytes that have been input, but will not be processed until more input
+   * data is provided.
+   */
+  public int getPendingInputBytes() {
+    return inputFrameCount * channelCount * BYTES_PER_SAMPLE;
+  }
+
+  /**
    * Queues remaining data from {@code buffer}, and advances its position by the number of bytes
    * consumed.
    *
@@ -102,7 +113,7 @@ import java.util.Arrays;
    * @param buffer A {@link ShortBuffer} into which output will be written.
    */
   public void getOutput(ShortBuffer buffer) {
-    int framesToRead = Math.min(buffer.remaining() / channelCount, outputFrameCount);
+    int framesToRead = min(buffer.remaining() / channelCount, outputFrameCount);
     buffer.put(outputBuffer, 0, framesToRead * channelCount);
     outputFrameCount -= framesToRead;
     System.arraycopy(
@@ -157,9 +168,9 @@ import java.util.Arrays;
     maxDiff = 0;
   }
 
-  /** Returns the number of output frames that can be read with {@link #getOutput(ShortBuffer)}. */
-  public int getFramesAvailable() {
-    return outputFrameCount;
+  /** Returns the size of output that can be read with {@link #getOutput(ShortBuffer)}, in bytes. */
+  public int getOutputSize() {
+    return outputFrameCount * channelCount * BYTES_PER_SAMPLE;
   }
 
   // Internal methods.
@@ -204,7 +215,7 @@ import java.util.Arrays;
   }
 
   private int copyInputToOutput(int positionFrames) {
-    int frameCount = Math.min(maxRequiredFrameCount, remainingInputToCopyFrameCount);
+    int frameCount = min(maxRequiredFrameCount, remainingInputToCopyFrameCount);
     copyToOutput(inputBuffer, positionFrames, frameCount);
     remainingInputToCopyFrameCount -= frameCount;
     return frameCount;
@@ -501,5 +512,4 @@ import java.util.Arrays;
       }
     }
   }
-
 }

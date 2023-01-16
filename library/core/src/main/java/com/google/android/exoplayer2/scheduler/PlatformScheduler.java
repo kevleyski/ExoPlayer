@@ -15,7 +15,8 @@
  */
 package com.google.android.exoplayer2.scheduler;
 
-import android.annotation.TargetApi;
+import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
+
 import android.app.job.JobInfo;
 import android.app.job.JobParameters;
 import android.app.job.JobScheduler;
@@ -24,8 +25,9 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.PersistableBundle;
-import android.support.annotation.RequiresPermission;
-import android.util.Log;
+import androidx.annotation.RequiresApi;
+import androidx.annotation.RequiresPermission;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 
 /**
@@ -34,19 +36,26 @@ import com.google.android.exoplayer2.util.Util;
  *
  * <pre>{@literal
  * <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+ * <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
  *
- * <service android:name="com.google.android.exoplayer2.util.scheduler.PlatformScheduler$PlatformSchedulerService"
+ * <service android:name="com.google.android.exoplayer2.scheduler.PlatformScheduler$PlatformSchedulerService"
  *     android:permission="android.permission.BIND_JOB_SERVICE"
  *     android:exported="true"/>
  * }</pre>
  */
-@TargetApi(21)
+@RequiresApi(21)
 public final class PlatformScheduler implements Scheduler {
 
   private static final String TAG = "PlatformScheduler";
   private static final String KEY_SERVICE_ACTION = "service_action";
   private static final String KEY_SERVICE_PACKAGE = "service_package";
   private static final String KEY_REQUIREMENTS = "requirements";
+  private static final int SUPPORTED_REQUIREMENTS =
+      Requirements.NETWORK
+          | Requirements.NETWORK_UNMETERED
+          | Requirements.DEVICE_IDLE
+          | Requirements.DEVICE_CHARGING
+          | (Util.SDK_INT >= 26 ? Requirements.DEVICE_STORAGE_NOT_LOW : 0);
 
   private final int jobId;
   private final ComponentName jobServiceComponentName;
@@ -61,9 +70,11 @@ public final class PlatformScheduler implements Scheduler {
    */
   @RequiresPermission(android.Manifest.permission.RECEIVE_BOOT_COMPLETED)
   public PlatformScheduler(Context context, int jobId) {
+    context = context.getApplicationContext();
     this.jobId = jobId;
     jobServiceComponentName = new ComponentName(context, PlatformSchedulerService.class);
-    jobScheduler = (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+    jobScheduler =
+        checkNotNull((JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE));
   }
 
   @Override
@@ -71,15 +82,18 @@ public final class PlatformScheduler implements Scheduler {
     JobInfo jobInfo =
         buildJobInfo(jobId, jobServiceComponentName, requirements, serviceAction, servicePackage);
     int result = jobScheduler.schedule(jobInfo);
-    logd("Scheduling job: " + jobId + " result: " + result);
     return result == JobScheduler.RESULT_SUCCESS;
   }
 
   @Override
   public boolean cancel() {
-    logd("Canceling job: " + jobId);
     jobScheduler.cancel(jobId);
     return true;
+  }
+
+  @Override
+  public Requirements getSupportedRequirements(Requirements requirements) {
+    return requirements.filterRequirements(SUPPORTED_REQUIREMENTS);
   }
 
   // @RequiresPermission constructor annotation should ensure the permission is present.
@@ -90,74 +104,51 @@ public final class PlatformScheduler implements Scheduler {
       Requirements requirements,
       String serviceAction,
       String servicePackage) {
-    JobInfo.Builder builder = new JobInfo.Builder(jobId, jobServiceComponentName);
-
-    int networkType;
-    switch (requirements.getRequiredNetworkType()) {
-      case Requirements.NETWORK_TYPE_NONE:
-        networkType = JobInfo.NETWORK_TYPE_NONE;
-        break;
-      case Requirements.NETWORK_TYPE_ANY:
-        networkType = JobInfo.NETWORK_TYPE_ANY;
-        break;
-      case Requirements.NETWORK_TYPE_UNMETERED:
-        networkType = JobInfo.NETWORK_TYPE_UNMETERED;
-        break;
-      case Requirements.NETWORK_TYPE_NOT_ROAMING:
-        if (Util.SDK_INT >= 24) {
-          networkType = JobInfo.NETWORK_TYPE_NOT_ROAMING;
-        } else {
-          throw new UnsupportedOperationException();
-        }
-        break;
-      case Requirements.NETWORK_TYPE_METERED:
-        if (Util.SDK_INT >= 26) {
-          networkType = JobInfo.NETWORK_TYPE_METERED;
-        } else {
-          throw new UnsupportedOperationException();
-        }
-        break;
-      default:
-        throw new UnsupportedOperationException();
+    Requirements filteredRequirements = requirements.filterRequirements(SUPPORTED_REQUIREMENTS);
+    if (!filteredRequirements.equals(requirements)) {
+      Log.w(
+          TAG,
+          "Ignoring unsupported requirements: "
+              + (filteredRequirements.getRequirements() ^ requirements.getRequirements()));
     }
 
-    builder.setRequiredNetworkType(networkType);
+    JobInfo.Builder builder = new JobInfo.Builder(jobId, jobServiceComponentName);
+    if (requirements.isUnmeteredNetworkRequired()) {
+      builder.setRequiredNetworkType(JobInfo.NETWORK_TYPE_UNMETERED);
+    } else if (requirements.isNetworkRequired()) {
+      builder.setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY);
+    }
     builder.setRequiresDeviceIdle(requirements.isIdleRequired());
     builder.setRequiresCharging(requirements.isChargingRequired());
+    if (Util.SDK_INT >= 26 && requirements.isStorageNotLowRequired()) {
+      builder.setRequiresStorageNotLow(true);
+    }
     builder.setPersisted(true);
 
     PersistableBundle extras = new PersistableBundle();
     extras.putString(KEY_SERVICE_ACTION, serviceAction);
     extras.putString(KEY_SERVICE_PACKAGE, servicePackage);
-    extras.putInt(KEY_REQUIREMENTS, requirements.getRequirementsData());
+    extras.putInt(KEY_REQUIREMENTS, requirements.getRequirements());
     builder.setExtras(extras);
 
     return builder.build();
-  }
-
-  private static void logd(String message) {
-    if (DEBUG) {
-      Log.d(TAG, message);
-    }
   }
 
   /** A {@link JobService} that starts the target service if the requirements are met. */
   public static final class PlatformSchedulerService extends JobService {
     @Override
     public boolean onStartJob(JobParameters params) {
-      logd("PlatformSchedulerService started");
       PersistableBundle extras = params.getExtras();
       Requirements requirements = new Requirements(extras.getInt(KEY_REQUIREMENTS));
-      if (requirements.checkRequirements(this)) {
-        logd("Requirements are met");
-        String serviceAction = extras.getString(KEY_SERVICE_ACTION);
-        String servicePackage = extras.getString(KEY_SERVICE_PACKAGE);
+      int notMetRequirements = requirements.getNotMetRequirements(this);
+      if (notMetRequirements == 0) {
+        String serviceAction = checkNotNull(extras.getString(KEY_SERVICE_ACTION));
+        String servicePackage = checkNotNull(extras.getString(KEY_SERVICE_PACKAGE));
         Intent intent = new Intent(serviceAction).setPackage(servicePackage);
-        logd("Starting service action: " + serviceAction + " package: " + servicePackage);
         Util.startForegroundService(this, intent);
       } else {
-        logd("Requirements are not met");
-        jobFinished(params, /* needsReschedule */ true);
+        Log.w(TAG, "Requirements not met: " + notMetRequirements);
+        jobFinished(params, /* wantsReschedule= */ true);
       }
       return false;
     }

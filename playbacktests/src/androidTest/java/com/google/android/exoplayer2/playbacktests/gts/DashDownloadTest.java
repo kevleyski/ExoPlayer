@@ -18,79 +18,80 @@ package com.google.android.exoplayer2.playbacktests.gts;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import android.net.Uri;
-import android.test.ActivityInstrumentationTestCase2;
-import com.google.android.exoplayer2.offline.DownloaderConstructorHelper;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.rule.ActivityTestRule;
+import com.google.android.exoplayer2.MediaItem;
+import com.google.android.exoplayer2.database.StandaloneDatabaseProvider;
+import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.source.dash.DashUtil;
 import com.google.android.exoplayer2.source.dash.manifest.AdaptationSet;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifest;
 import com.google.android.exoplayer2.source.dash.manifest.Representation;
-import com.google.android.exoplayer2.source.dash.manifest.RepresentationKey;
 import com.google.android.exoplayer2.source.dash.offline.DashDownloader;
 import com.google.android.exoplayer2.testutil.HostActivity;
-import com.google.android.exoplayer2.upstream.DefaultHttpDataSourceFactory;
-import com.google.android.exoplayer2.upstream.DummyDataSource;
+import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.DefaultHttpDataSource;
 import com.google.android.exoplayer2.upstream.cache.CacheDataSource;
-import com.google.android.exoplayer2.upstream.cache.CacheDataSourceFactory;
 import com.google.android.exoplayer2.upstream.cache.NoOpCacheEvictor;
 import com.google.android.exoplayer2.upstream.cache.SimpleCache;
 import com.google.android.exoplayer2.util.Util;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
-/**
- * Tests downloaded DASH playbacks.
- */
-public final class DashDownloadTest extends ActivityInstrumentationTestCase2<HostActivity> {
+/** Tests downloaded DASH playbacks. */
+@RunWith(AndroidJUnit4.class)
+public final class DashDownloadTest {
 
   private static final String TAG = "DashDownloadTest";
 
   private static final Uri MANIFEST_URI = Uri.parse(DashTestData.H264_MANIFEST);
 
+  @Rule public ActivityTestRule<HostActivity> testRule = new ActivityTestRule<>(HostActivity.class);
+
   private DashTestRunner testRunner;
   private File tempFolder;
   private SimpleCache cache;
-  private DefaultHttpDataSourceFactory httpDataSourceFactory;
-  private CacheDataSourceFactory offlineDataSourceFactory;
+  private DataSource.Factory httpDataSourceFactory;
+  private DataSource.Factory offlineDataSourceFactory;
 
-  public DashDownloadTest() {
-    super(HostActivity.class);
+  @Before
+  public void setUp() throws Exception {
+    testRunner =
+        new DashTestRunner(TAG, testRule.getActivity())
+            .setManifestUrl(DashTestData.H264_MANIFEST)
+            .setFullPlaybackNoSeeking(true)
+            .setCanIncludeAdditionalVideoFormats(false)
+            .setAudioVideoFormats(
+                DashTestData.AAC_AUDIO_REPRESENTATION_ID, DashTestData.H264_CDD_FIXED);
+    tempFolder = Util.createTempDirectory(testRule.getActivity(), "ExoPlayerTest");
+    cache =
+        new SimpleCache(
+            tempFolder,
+            new NoOpCacheEvictor(),
+            new StandaloneDatabaseProvider(testRule.getActivity()));
+    httpDataSourceFactory = new DefaultHttpDataSource.Factory();
+    offlineDataSourceFactory = new CacheDataSource.Factory().setCache(cache);
   }
 
-  @Override
-  protected void setUp() throws Exception {
-    super.setUp();
-    testRunner = new DashTestRunner(TAG, getActivity(), getInstrumentation())
-        .setManifestUrl(DashTestData.H264_MANIFEST)
-        .setFullPlaybackNoSeeking(true)
-        .setCanIncludeAdditionalVideoFormats(false)
-        .setAudioVideoFormats(DashTestData.AAC_AUDIO_REPRESENTATION_ID,
-            DashTestData.H264_CDD_FIXED);
-    tempFolder = Util.createTempDirectory(getActivity(), "ExoPlayerTest");
-    cache = new SimpleCache(tempFolder, new NoOpCacheEvictor());
-    httpDataSourceFactory = new DefaultHttpDataSourceFactory("ExoPlayer", null);
-    offlineDataSourceFactory =
-        new CacheDataSourceFactory(
-            cache, DummyDataSource.FACTORY, CacheDataSource.FLAG_BLOCK_ON_CACHE);
-  }
-
-  @Override
-  protected void tearDown() throws Exception {
+  @After
+  public void tearDown() {
     testRunner = null;
     Util.recursiveDelete(tempFolder);
     cache = null;
-    super.tearDown();
   }
 
   // Download tests
 
-  public void testDownload() throws Exception {
-    if (Util.SDK_INT < 16) {
-      return; // Pass.
-    }
-
+  @Test
+  public void download() throws Exception {
     DashDownloader dashDownloader = downloadContent();
-    dashDownloader.download();
+    dashDownloader.download(/* progressListener= */ null);
 
     testRunner
         .setStreamName("test_h264_fixed_download")
@@ -106,7 +107,7 @@ public final class DashDownloadTest extends ActivityInstrumentationTestCase2<Hos
   private DashDownloader downloadContent() throws Exception {
     DashManifest dashManifest =
         DashUtil.loadManifest(httpDataSourceFactory.createDataSource(), MANIFEST_URI);
-    ArrayList<RepresentationKey> keys = new ArrayList<>();
+    ArrayList<StreamKey> keys = new ArrayList<>();
     for (int pIndex = 0; pIndex < dashManifest.getPeriodCount(); pIndex++) {
       List<AdaptationSet> adaptationSets = dashManifest.getPeriod(pIndex).adaptationSets;
       for (int aIndex = 0; aIndex < adaptationSets.size(); aIndex++) {
@@ -116,14 +117,17 @@ public final class DashDownloadTest extends ActivityInstrumentationTestCase2<Hos
           String id = representations.get(rIndex).format.id;
           if (DashTestData.AAC_AUDIO_REPRESENTATION_ID.equals(id)
               || DashTestData.H264_CDD_FIXED.equals(id)) {
-            keys.add(new RepresentationKey(pIndex, aIndex, rIndex));
+            keys.add(new StreamKey(pIndex, aIndex, rIndex));
           }
         }
       }
     }
-    DownloaderConstructorHelper constructorHelper =
-        new DownloaderConstructorHelper(cache, httpDataSourceFactory);
-    return new DashDownloader(MANIFEST_URI, keys, constructorHelper);
+    CacheDataSource.Factory cacheDataSourceFactory =
+        new CacheDataSource.Factory()
+            .setCache(cache)
+            .setUpstreamDataSourceFactory(httpDataSourceFactory);
+    return new DashDownloader(
+        new MediaItem.Builder().setUri(MANIFEST_URI).setStreamKeys(keys).build(),
+        cacheDataSourceFactory);
   }
-
 }

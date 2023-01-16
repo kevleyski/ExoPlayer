@@ -22,9 +22,7 @@ import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.util.Assertions;
 import java.io.IOException;
 
-/**
- * {@link SampleStream} for a particular sample queue in HLS.
- */
+/** {@link SampleStream} for a particular sample queue in HLS. */
 /* package */ final class HlsSampleStream implements SampleStream {
 
   private final int trackGroupIndex;
@@ -62,14 +60,22 @@ import java.io.IOException;
     if (sampleQueueIndex == HlsSampleStreamWrapper.SAMPLE_QUEUE_INDEX_NO_MAPPING_FATAL) {
       throw new SampleQueueMappingException(
           sampleStreamWrapper.getTrackGroups().get(trackGroupIndex).getFormat(0).sampleMimeType);
+    } else if (sampleQueueIndex == HlsSampleStreamWrapper.SAMPLE_QUEUE_INDEX_PENDING) {
+      sampleStreamWrapper.maybeThrowError();
+    } else if (sampleQueueIndex != HlsSampleStreamWrapper.SAMPLE_QUEUE_INDEX_NO_MAPPING_NON_FATAL) {
+      sampleStreamWrapper.maybeThrowError(sampleQueueIndex);
     }
-    sampleStreamWrapper.maybeThrowError();
   }
 
   @Override
-  public int readData(FormatHolder formatHolder, DecoderInputBuffer buffer, boolean requireFormat) {
+  public int readData(
+      FormatHolder formatHolder, DecoderInputBuffer buffer, @ReadFlags int readFlags) {
+    if (sampleQueueIndex == HlsSampleStreamWrapper.SAMPLE_QUEUE_INDEX_NO_MAPPING_NON_FATAL) {
+      buffer.addFlag(C.BUFFER_FLAG_END_OF_STREAM);
+      return C.RESULT_BUFFER_READ;
+    }
     return hasValidSampleQueueIndex()
-        ? sampleStreamWrapper.readData(sampleQueueIndex, formatHolder, buffer, requireFormat)
+        ? sampleStreamWrapper.readData(sampleQueueIndex, formatHolder, buffer, readFlags)
         : C.RESULT_NOTHING_READ;
   }
 
