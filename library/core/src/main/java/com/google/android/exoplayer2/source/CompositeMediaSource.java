@@ -16,12 +16,14 @@
 package com.google.android.exoplayer2.source;
 
 import android.os.Handler;
-import android.support.annotation.CallSuper;
-import android.support.annotation.Nullable;
-import com.google.android.exoplayer2.ExoPlayer;
+import androidx.annotation.CallSuper;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.Timeline;
-import com.google.android.exoplayer2.source.MediaSourceEventListener.MediaLoadData;
+import com.google.android.exoplayer2.drm.DrmSession;
+import com.google.android.exoplayer2.drm.DrmSessionEventListener;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.UnknownNull;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 import java.util.HashMap;
@@ -33,59 +35,73 @@ import java.util.HashMap;
  */
 public abstract class CompositeMediaSource<T> extends BaseMediaSource {
 
-  private final HashMap<T, MediaSourceAndListener> childSources;
+  private final HashMap<T, MediaSourceAndListener<T>> childSources;
 
-  private ExoPlayer player;
-  private Handler eventHandler;
+  @Nullable private Handler eventHandler;
+  @Nullable private TransferListener mediaTransferListener;
 
-  /** Create composite media source without child sources. */
+  /** Creates composite media source without child sources. */
   protected CompositeMediaSource() {
     childSources = new HashMap<>();
   }
 
   @Override
   @CallSuper
-  public void prepareSourceInternal(ExoPlayer player, boolean isTopLevelSource) {
-    this.player = player;
-    eventHandler = new Handler();
+  protected void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
+    this.mediaTransferListener = mediaTransferListener;
+    eventHandler = Util.createHandlerForCurrentLooper();
   }
 
   @Override
   @CallSuper
   public void maybeThrowSourceInfoRefreshError() throws IOException {
-    for (MediaSourceAndListener childSource : childSources.values()) {
+    for (MediaSourceAndListener<T> childSource : childSources.values()) {
       childSource.mediaSource.maybeThrowSourceInfoRefreshError();
     }
   }
 
   @Override
   @CallSuper
-  public void releaseSourceInternal() {
-    for (MediaSourceAndListener childSource : childSources.values()) {
-      childSource.mediaSource.releaseSource(childSource.listener);
+  protected void enableInternal() {
+    for (MediaSourceAndListener<T> childSource : childSources.values()) {
+      childSource.mediaSource.enable(childSource.caller);
+    }
+  }
+
+  @Override
+  @CallSuper
+  protected void disableInternal() {
+    for (MediaSourceAndListener<T> childSource : childSources.values()) {
+      childSource.mediaSource.disable(childSource.caller);
+    }
+  }
+
+  @Override
+  @CallSuper
+  protected void releaseSourceInternal() {
+    for (MediaSourceAndListener<T> childSource : childSources.values()) {
+      childSource.mediaSource.releaseSource(childSource.caller);
       childSource.mediaSource.removeEventListener(childSource.eventListener);
+      childSource.mediaSource.removeDrmEventListener(childSource.eventListener);
     }
     childSources.clear();
-    player = null;
   }
 
   /**
    * Called when the source info of a child source has been refreshed.
    *
-   * @param id The unique id used to prepare the child source.
+   * @param childSourceId The unique id used to prepare the child source.
    * @param mediaSource The child source whose source info has been refreshed.
-   * @param timeline The timeline of the child source.
-   * @param manifest The manifest of the child source.
+   * @param newTimeline The timeline of the child source.
    */
   protected abstract void onChildSourceInfoRefreshed(
-      @Nullable T id, MediaSource mediaSource, Timeline timeline, @Nullable Object manifest);
+      @UnknownNull T childSourceId, MediaSource mediaSource, Timeline newTimeline);
 
   /**
    * Prepares a child source.
    *
-   * <p>{@link #onChildSourceInfoRefreshed(Object, MediaSource, Timeline, Object)} will be called
-   * when the child source updates its timeline and/or manifest with the same {@code id} passed to
-   * this method.
+   * <p>{@link #onChildSourceInfoRefreshed(Object, MediaSource, Timeline)} will be called when the
+   * child source updates its timeline with the same {@code id} passed to this method.
    *
    * <p>Any child sources that aren't explicitly released with {@link #releaseChildSource(Object)}
    * will be released in {@link #releaseSourceInternal()}.
@@ -93,20 +109,38 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
    * @param id A unique id to identify the child source preparation. Null is allowed as an id.
    * @param mediaSource The child {@link MediaSource}.
    */
-  protected final void prepareChildSource(@Nullable final T id, MediaSource mediaSource) {
+  protected final void prepareChildSource(@UnknownNull T id, MediaSource mediaSource) {
     Assertions.checkArgument(!childSources.containsKey(id));
-    SourceInfoRefreshListener sourceListener =
-        new SourceInfoRefreshListener() {
-          @Override
-          public void onSourceInfoRefreshed(
-              MediaSource source, Timeline timeline, @Nullable Object manifest) {
-            onChildSourceInfoRefreshed(id, source, timeline, manifest);
-          }
-        };
-    MediaSourceEventListener eventListener = new ForwardingEventListener(id);
-    childSources.put(id, new MediaSourceAndListener(mediaSource, sourceListener, eventListener));
-    mediaSource.addEventListener(eventHandler, eventListener);
-    mediaSource.prepareSource(player, /* isTopLevelSource= */ false, sourceListener);
+    MediaSourceCaller caller =
+        (source, timeline) -> onChildSourceInfoRefreshed(id, source, timeline);
+    ForwardingEventListener eventListener = new ForwardingEventListener(id);
+    childSources.put(id, new MediaSourceAndListener<>(mediaSource, caller, eventListener));
+    mediaSource.addEventListener(Assertions.checkNotNull(eventHandler), eventListener);
+    mediaSource.addDrmEventListener(Assertions.checkNotNull(eventHandler), eventListener);
+    mediaSource.prepareSource(caller, mediaTransferListener, getPlayerId());
+    if (!isEnabled()) {
+      mediaSource.disable(caller);
+    }
+  }
+
+  /**
+   * Enables a child source.
+   *
+   * @param id The unique id used to prepare the child source.
+   */
+  protected final void enableChildSource(@UnknownNull T id) {
+    MediaSourceAndListener<T> enabledChild = Assertions.checkNotNull(childSources.get(id));
+    enabledChild.mediaSource.enable(enabledChild.caller);
+  }
+
+  /**
+   * Disables a child source.
+   *
+   * @param id The unique id used to prepare the child source.
+   */
+  protected final void disableChildSource(@UnknownNull T id) {
+    MediaSourceAndListener<T> disabledChild = Assertions.checkNotNull(childSources.get(id));
+    disabledChild.mediaSource.disable(disabledChild.caller);
   }
 
   /**
@@ -114,21 +148,22 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
    *
    * @param id The unique id used to prepare the child source.
    */
-  protected final void releaseChildSource(@Nullable T id) {
-    MediaSourceAndListener removedChild = childSources.remove(id);
-    removedChild.mediaSource.releaseSource(removedChild.listener);
+  protected final void releaseChildSource(@UnknownNull T id) {
+    MediaSourceAndListener<T> removedChild = Assertions.checkNotNull(childSources.remove(id));
+    removedChild.mediaSource.releaseSource(removedChild.caller);
     removedChild.mediaSource.removeEventListener(removedChild.eventListener);
+    removedChild.mediaSource.removeDrmEventListener(removedChild.eventListener);
   }
 
   /**
    * Returns the window index in the composite source corresponding to the specified window index in
    * a child source. The default implementation does not change the window index.
    *
-   * @param id The unique id used to prepare the child source.
+   * @param childSourceId The unique id used to prepare the child source.
    * @param windowIndex A window index of the child source.
    * @return The corresponding window index in the composite source.
    */
-  protected int getWindowIndexForChildWindowIndex(@Nullable T id, int windowIndex) {
+  protected int getWindowIndexForChildWindowIndex(@UnknownNull T childSourceId, int windowIndex) {
     return windowIndex;
   }
 
@@ -137,67 +172,62 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
    * MediaPeriodId} in a child source. The default implementation does not change the media period
    * id.
    *
-   * @param id The unique id used to prepare the child source.
+   * @param childSourceId The unique id used to prepare the child source.
    * @param mediaPeriodId A {@link MediaPeriodId} of the child source.
    * @return The corresponding {@link MediaPeriodId} in the composite source. Null if no
    *     corresponding media period id can be determined.
    */
-  protected @Nullable MediaPeriodId getMediaPeriodIdForChildMediaPeriodId(
-      @Nullable T id, MediaPeriodId mediaPeriodId) {
+  @Nullable
+  protected MediaPeriodId getMediaPeriodIdForChildMediaPeriodId(
+      @UnknownNull T childSourceId, MediaPeriodId mediaPeriodId) {
     return mediaPeriodId;
   }
 
   /**
-   * Returns the media time in the composite source corresponding to the specified media time in a
-   * child source. The default implementation does not change the media time.
+   * Returns the media time in the {@link MediaPeriod} of the composite source corresponding to the
+   * specified media time in the {@link MediaPeriod} of the child source. The default implementation
+   * does not change the media time.
    *
-   * @param id The unique id used to prepare the child source.
-   * @param mediaTimeMs A media time of the child source, in milliseconds.
-   * @return The corresponding media time in the composite source, in milliseconds.
+   * @param childSourceId The unique id used to prepare the child source.
+   * @param mediaTimeMs A media time in the {@link MediaPeriod} of the child source, in
+   *     milliseconds.
+   * @return The corresponding media time in the {@link MediaPeriod} of the composite source, in
+   *     milliseconds.
    */
-  protected long getMediaTimeForChildMediaTime(@Nullable T id, long mediaTimeMs) {
+  protected long getMediaTimeForChildMediaTime(@UnknownNull T childSourceId, long mediaTimeMs) {
     return mediaTimeMs;
   }
 
-  private static final class MediaSourceAndListener {
+  private static final class MediaSourceAndListener<T> {
 
     public final MediaSource mediaSource;
-    public final SourceInfoRefreshListener listener;
-    public final MediaSourceEventListener eventListener;
+    public final MediaSourceCaller caller;
+    public final CompositeMediaSource<T>.ForwardingEventListener eventListener;
 
     public MediaSourceAndListener(
         MediaSource mediaSource,
-        SourceInfoRefreshListener listener,
-        MediaSourceEventListener eventListener) {
+        MediaSourceCaller caller,
+        CompositeMediaSource<T>.ForwardingEventListener eventListener) {
       this.mediaSource = mediaSource;
-      this.listener = listener;
+      this.caller = caller;
       this.eventListener = eventListener;
     }
   }
 
-  private final class ForwardingEventListener implements MediaSourceEventListener {
+  private final class ForwardingEventListener
+      implements MediaSourceEventListener, DrmSessionEventListener {
 
-    private final @Nullable T id;
-    private EventDispatcher eventDispatcher;
+    @UnknownNull private final T id;
+    private MediaSourceEventListener.EventDispatcher mediaSourceEventDispatcher;
+    private DrmSessionEventListener.EventDispatcher drmEventDispatcher;
 
-    public ForwardingEventListener(@Nullable T id) {
-      this.eventDispatcher = createEventDispatcher(/* mediaPeriodId= */ null);
+    public ForwardingEventListener(@UnknownNull T id) {
+      this.mediaSourceEventDispatcher = createEventDispatcher(/* mediaPeriodId= */ null);
+      this.drmEventDispatcher = createDrmEventDispatcher(/* mediaPeriodId= */ null);
       this.id = id;
     }
 
-    @Override
-    public void onMediaPeriodCreated(int windowIndex, MediaPeriodId mediaPeriodId) {
-      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.mediaPeriodCreated();
-      }
-    }
-
-    @Override
-    public void onMediaPeriodReleased(int windowIndex, MediaPeriodId mediaPeriodId) {
-      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.mediaPeriodReleased();
-      }
-    }
+    // MediaSourceEventListener implementation
 
     @Override
     public void onLoadStarted(
@@ -206,7 +236,8 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
         LoadEventInfo loadEventData,
         MediaLoadData mediaLoadData) {
       if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.loadStarted(loadEventData, maybeUpdateMediaLoadData(mediaLoadData));
+        mediaSourceEventDispatcher.loadStarted(
+            loadEventData, maybeUpdateMediaLoadData(mediaLoadData));
       }
     }
 
@@ -217,7 +248,8 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
         LoadEventInfo loadEventData,
         MediaLoadData mediaLoadData) {
       if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.loadCompleted(loadEventData, maybeUpdateMediaLoadData(mediaLoadData));
+        mediaSourceEventDispatcher.loadCompleted(
+            loadEventData, maybeUpdateMediaLoadData(mediaLoadData));
       }
     }
 
@@ -228,7 +260,8 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
         LoadEventInfo loadEventData,
         MediaLoadData mediaLoadData) {
       if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.loadCanceled(loadEventData, maybeUpdateMediaLoadData(mediaLoadData));
+        mediaSourceEventDispatcher.loadCanceled(
+            loadEventData, maybeUpdateMediaLoadData(mediaLoadData));
       }
     }
 
@@ -241,15 +274,8 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
         IOException error,
         boolean wasCanceled) {
       if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.loadError(
+        mediaSourceEventDispatcher.loadError(
             loadEventData, maybeUpdateMediaLoadData(mediaLoadData), error, wasCanceled);
-      }
-    }
-
-    @Override
-    public void onReadingStarted(int windowIndex, MediaPeriodId mediaPeriodId) {
-      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.readingStarted();
       }
     }
 
@@ -257,7 +283,7 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
     public void onUpstreamDiscarded(
         int windowIndex, @Nullable MediaPeriodId mediaPeriodId, MediaLoadData mediaLoadData) {
       if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.upstreamDiscarded(maybeUpdateMediaLoadData(mediaLoadData));
+        mediaSourceEventDispatcher.upstreamDiscarded(maybeUpdateMediaLoadData(mediaLoadData));
       }
     }
 
@@ -265,14 +291,60 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
     public void onDownstreamFormatChanged(
         int windowIndex, @Nullable MediaPeriodId mediaPeriodId, MediaLoadData mediaLoadData) {
       if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
-        eventDispatcher.downstreamFormatChanged(maybeUpdateMediaLoadData(mediaLoadData));
+        mediaSourceEventDispatcher.downstreamFormatChanged(maybeUpdateMediaLoadData(mediaLoadData));
+      }
+    }
+
+    // DrmSessionEventListener implementation
+
+    @Override
+    public void onDrmSessionAcquired(
+        int windowIndex, @Nullable MediaPeriodId mediaPeriodId, @DrmSession.State int state) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        drmEventDispatcher.drmSessionAcquired(state);
+      }
+    }
+
+    @Override
+    public void onDrmKeysLoaded(int windowIndex, @Nullable MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        drmEventDispatcher.drmKeysLoaded();
+      }
+    }
+
+    @Override
+    public void onDrmSessionManagerError(
+        int windowIndex, @Nullable MediaPeriodId mediaPeriodId, Exception error) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        drmEventDispatcher.drmSessionManagerError(error);
+      }
+    }
+
+    @Override
+    public void onDrmKeysRestored(int windowIndex, @Nullable MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        drmEventDispatcher.drmKeysRestored();
+      }
+    }
+
+    @Override
+    public void onDrmKeysRemoved(int windowIndex, @Nullable MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        drmEventDispatcher.drmKeysRemoved();
+      }
+    }
+
+    @Override
+    public void onDrmSessionReleased(int windowIndex, @Nullable MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        drmEventDispatcher.drmSessionReleased();
       }
     }
 
     /** Updates the event dispatcher and returns whether the event should be dispatched. */
     private boolean maybeUpdateEventDispatcher(
         int childWindowIndex, @Nullable MediaPeriodId childMediaPeriodId) {
-      MediaPeriodId mediaPeriodId = null;
+      @Nullable MediaPeriodId mediaPeriodId = null;
       if (childMediaPeriodId != null) {
         mediaPeriodId = getMediaPeriodIdForChildMediaPeriodId(id, childMediaPeriodId);
         if (mediaPeriodId == null) {
@@ -281,10 +353,14 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
         }
       }
       int windowIndex = getWindowIndexForChildWindowIndex(id, childWindowIndex);
-      if (eventDispatcher.windowIndex != windowIndex
-          || !Util.areEqual(eventDispatcher.mediaPeriodId, mediaPeriodId)) {
-        eventDispatcher =
+      if (mediaSourceEventDispatcher.windowIndex != windowIndex
+          || !Util.areEqual(mediaSourceEventDispatcher.mediaPeriodId, mediaPeriodId)) {
+        mediaSourceEventDispatcher =
             createEventDispatcher(windowIndex, mediaPeriodId, /* mediaTimeOffsetMs= */ 0);
+      }
+      if (drmEventDispatcher.windowIndex != windowIndex
+          || !Util.areEqual(drmEventDispatcher.mediaPeriodId, mediaPeriodId)) {
+        drmEventDispatcher = createDrmEventDispatcher(windowIndex, mediaPeriodId);
       }
       return true;
     }

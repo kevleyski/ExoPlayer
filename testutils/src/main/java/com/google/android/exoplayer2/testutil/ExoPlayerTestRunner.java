@@ -16,251 +16,305 @@
 package com.google.android.exoplayer2.testutil;
 
 import static com.google.common.truth.Truth.assertThat;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static junit.framework.TestCase.assertFalse;
 
+import android.content.Context;
 import android.os.HandlerThread;
-import android.support.annotation.Nullable;
-import com.google.android.exoplayer2.DefaultLoadControl;
+import android.os.Looper;
+import android.view.Surface;
+import androidx.annotation.Nullable;
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
+import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.LoadControl;
+import com.google.android.exoplayer2.MediaItem;
+import com.google.android.exoplayer2.PlaybackException;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Renderer;
 import com.google.android.exoplayer2.RenderersFactory;
-import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.Timeline;
-import com.google.android.exoplayer2.analytics.AnalyticsCollector;
 import com.google.android.exoplayer2.analytics.AnalyticsListener;
-import com.google.android.exoplayer2.audio.AudioRendererEventListener;
-import com.google.android.exoplayer2.drm.DrmSessionManager;
-import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
-import com.google.android.exoplayer2.metadata.MetadataOutput;
 import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
-import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
-import com.google.android.exoplayer2.trackselection.TrackSelector;
+import com.google.android.exoplayer2.upstream.BandwidthMeter;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.HandlerWrapper;
 import com.google.android.exoplayer2.util.MimeTypes;
-import com.google.android.exoplayer2.video.VideoRendererEventListener;
+import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Helper class to run an ExoPlayer test.
- */
-public final class ExoPlayerTestRunner extends Player.DefaultEventListener
-    implements ActionSchedule.Callback {
+/** Helper class to run an ExoPlayer test. */
+public final class ExoPlayerTestRunner implements Player.Listener, ActionSchedule.Callback {
+
+  /** A generic video {@link Format} which can be used to set up a {@link FakeMediaSource}. */
+  public static final Format VIDEO_FORMAT =
+      new Format.Builder()
+          .setSampleMimeType(MimeTypes.VIDEO_H264)
+          .setAverageBitrate(800_000)
+          .setWidth(1280)
+          .setHeight(720)
+          .build();
+
+  /** A generic audio {@link Format} which can be used to set up a {@link FakeMediaSource}. */
+  public static final Format AUDIO_FORMAT =
+      new Format.Builder()
+          .setSampleMimeType(MimeTypes.AUDIO_AAC)
+          .setAverageBitrate(100_000)
+          .setChannelCount(2)
+          .setSampleRate(44100)
+          .build();
 
   /**
-   * Builder to set-up a {@link ExoPlayerTestRunner}. Default fake implementations will be used for
+   * Builder to set-up an {@link ExoPlayerTestRunner}. Default fake implementations will be used for
    * unset test properties.
    */
   public static final class Builder {
-
-    /**
-     * A generic video {@link Format} which can be used to set up media sources and renderers.
-     */
-    public static final Format VIDEO_FORMAT = Format.createVideoSampleFormat(null,
-        MimeTypes.VIDEO_H264, null, Format.NO_VALUE, Format.NO_VALUE, 1280, 720, Format.NO_VALUE,
-        null, null);
-
-    /**
-     * A generic audio {@link Format} which can be used to set up media sources and renderers.
-     */
-    public static final Format AUDIO_FORMAT = Format.createAudioSampleFormat(null,
-        MimeTypes.AUDIO_AAC, null, Format.NO_VALUE, Format.NO_VALUE, 2, 44100, null, null, 0, null);
-
-    private Clock clock;
+    private final TestExoPlayerBuilder testPlayerBuilder;
     private Timeline timeline;
-    private Object manifest;
-    private MediaSource mediaSource;
-    private DefaultTrackSelector trackSelector;
-    private LoadControl loadControl;
+    private List<MediaSource> mediaSources;
     private Format[] supportedFormats;
-    private Renderer[] renderers;
-    private RenderersFactory renderersFactory;
+    private Object manifest;
     private ActionSchedule actionSchedule;
-    private Player.EventListener eventListener;
-    private VideoRendererEventListener videoRendererEventListener;
-    private AudioRendererEventListener audioRendererEventListener;
+    private Surface surface;
+    private Player.Listener playerListener;
     private AnalyticsListener analyticsListener;
     private Integer expectedPlayerEndedCount;
+    private boolean pauseAtEndOfMediaItems;
+    private int initialMediaItemIndex;
+    private long initialPositionMs;
+    private boolean skipSettingMediaSources;
+
+    public Builder(Context context) {
+      testPlayerBuilder = new TestExoPlayerBuilder(context);
+      mediaSources = new ArrayList<>();
+      supportedFormats = new Format[] {VIDEO_FORMAT};
+      initialMediaItemIndex = C.INDEX_UNSET;
+      initialPositionMs = C.TIME_UNSET;
+    }
 
     /**
      * Sets a {@link Timeline} to be used by a {@link FakeMediaSource} in the test runner. The
-     * default value is a seekable, non-dynamic {@link FakeTimeline} with a duration of
-     * {@link FakeTimeline.TimelineWindowDefinition#DEFAULT_WINDOW_DURATION_US}. Setting the
-     * timeline is not allowed after a call to {@link #setMediaSource(MediaSource)}.
+     * default value is a seekable, non-dynamic {@link FakeTimeline} with a duration of {@link
+     * FakeTimeline.TimelineWindowDefinition#DEFAULT_WINDOW_DURATION_US}. Setting the timeline is
+     * not allowed after a call to {@link #setMediaSources(MediaSource...)} or {@link
+     * #skipSettingMediaSources()}.
      *
      * @param timeline A {@link Timeline} to be used by a {@link FakeMediaSource} in the test
      *     runner.
      * @return This builder.
      */
+    @CanIgnoreReturnValue
     public Builder setTimeline(Timeline timeline) {
-      assertThat(mediaSource).isNull();
+      assertThat(mediaSources).isEmpty();
+      assertFalse(skipSettingMediaSources);
       this.timeline = timeline;
       return this;
     }
 
     /**
      * Sets a manifest to be used by a {@link FakeMediaSource} in the test runner. The default value
-     * is null. Setting the manifest is not allowed after a call to
-     * {@link #setMediaSource(MediaSource)}.
+     * is null. Setting the manifest is not allowed after a call to {@link
+     * #setMediaSources(MediaSource...)} or {@link #skipSettingMediaSources()}.
      *
      * @param manifest A manifest to be used by a {@link FakeMediaSource} in the test runner.
      * @return This builder.
      */
+    @CanIgnoreReturnValue
     public Builder setManifest(Object manifest) {
-      assertThat(mediaSource).isNull();
+      assertThat(mediaSources).isEmpty();
+      assertFalse(skipSettingMediaSources);
       this.manifest = manifest;
       return this;
     }
 
     /**
-     * Sets a {@link MediaSource} to be used by the test runner. The default value is a
-     * {@link FakeMediaSource} with the timeline and manifest provided by
-     * {@link #setTimeline(Timeline)} and {@link #setManifest(Object)}. Setting the media source is
-     * not allowed after calls to {@link #setTimeline(Timeline)} and/or
-     * {@link #setManifest(Object)}.
+     * Seeks before setting the media sources and preparing the player.
      *
-     * @param mediaSource A {@link MediaSource} to be used by the test runner.
+     * @param mediaItemIndex The media item index to seek to.
+     * @param positionMs The position in milliseconds to seek to.
      * @return This builder.
      */
-    public Builder setMediaSource(MediaSource mediaSource) {
+    @CanIgnoreReturnValue
+    public Builder initialSeek(int mediaItemIndex, long positionMs) {
+      this.initialMediaItemIndex = mediaItemIndex;
+      this.initialPositionMs = positionMs;
+      return this;
+    }
+
+    /**
+     * Sets the {@link MediaSource}s to be used by the test runner. The default value is a {@link
+     * FakeMediaSource} with the timeline and manifest provided by {@link #setTimeline(Timeline)}
+     * and {@link #setManifest(Object)}. Setting media sources is not allowed after calls to {@link
+     * #skipSettingMediaSources()}, {@link #setTimeline(Timeline)} and/or {@link
+     * #setManifest(Object)}.
+     *
+     * @param mediaSources The {@link MediaSource}s to be used by the test runner.
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    public Builder setMediaSources(MediaSource... mediaSources) {
       assertThat(timeline).isNull();
       assertThat(manifest).isNull();
-      this.mediaSource = mediaSource;
-      return this;
-    }
-
-    /**
-     * Sets a {@link DefaultTrackSelector} to be used by the test runner. The default value is a
-     * {@link DefaultTrackSelector} in its initial configuration.
-     *
-     * @param trackSelector A {@link DefaultTrackSelector} to be used by the test runner.
-     * @return This builder.
-     */
-    public Builder setTrackSelector(DefaultTrackSelector trackSelector) {
-      this.trackSelector = trackSelector;
-      return this;
-    }
-
-    /**
-     * Sets a {@link LoadControl} to be used by the test runner. The default value is a
-     * {@link DefaultLoadControl}.
-     *
-     * @param loadControl A {@link LoadControl} to be used by the test runner.
-     * @return This builder.
-     */
-    public Builder setLoadControl(LoadControl loadControl) {
-      this.loadControl = loadControl;
+      assertFalse(skipSettingMediaSources);
+      this.mediaSources = Arrays.asList(mediaSources);
       return this;
     }
 
     /**
      * Sets a list of {@link Format}s to be used by a {@link FakeMediaSource} to create media
-     * periods and for setting up a {@link FakeRenderer}. The default value is a single
-     * {@link #VIDEO_FORMAT}. Note that this parameter doesn't have any influence if both a media
-     * source with {@link #setMediaSource(MediaSource)} and renderers with
-     * {@link #setRenderers(Renderer...)} or {@link #setRenderersFactory(RenderersFactory)} are set.
+     * periods. The default value is a single {@link #VIDEO_FORMAT}. Note that this parameter
+     * doesn't have any influence if a media source with {@link #setMediaSources(MediaSource...)} is
+     * set.
      *
      * @param supportedFormats A list of supported {@link Format}s.
      * @return This builder.
      */
+    @CanIgnoreReturnValue
     public Builder setSupportedFormats(Format... supportedFormats) {
       this.supportedFormats = supportedFormats;
       return this;
     }
 
     /**
-     * Sets the {@link Renderer}s to be used by the test runner. The default value is a single
-     * {@link FakeRenderer} supporting the formats set by {@link #setSupportedFormats(Format...)}.
-     * Setting the renderers is not allowed after a call to
-     * {@link #setRenderersFactory(RenderersFactory)}.
+     * Skips calling {@link ExoPlayer#setMediaSources(List)} before preparing. Calling this method
+     * is not allowed after calls to {@link #setMediaSources(MediaSource...)}, {@link
+     * #setTimeline(Timeline)} and/or {@link #setManifest(Object)}.
      *
-     * @param renderers A list of {@link Renderer}s to be used by the test runner.
      * @return This builder.
      */
+    @CanIgnoreReturnValue
+    public Builder skipSettingMediaSources() {
+      assertThat(timeline).isNull();
+      assertThat(manifest).isNull();
+      assertThat(mediaSources).isEmpty();
+      skipSettingMediaSources = true;
+      return this;
+    }
+
+    /**
+     * @see TestExoPlayerBuilder#setUseLazyPreparation(boolean)
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    public Builder setUseLazyPreparation(boolean useLazyPreparation) {
+      testPlayerBuilder.setUseLazyPreparation(useLazyPreparation);
+      return this;
+    }
+
+    /**
+     * Sets whether to enable pausing at the end of media items.
+     *
+     * @param pauseAtEndOfMediaItems Whether to pause at the end of media items.
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    public Builder setPauseAtEndOfMediaItems(boolean pauseAtEndOfMediaItems) {
+      this.pauseAtEndOfMediaItems = pauseAtEndOfMediaItems;
+      return this;
+    }
+
+    /**
+     * @see TestExoPlayerBuilder#setTrackSelector(DefaultTrackSelector)
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    public Builder setTrackSelector(DefaultTrackSelector trackSelector) {
+      testPlayerBuilder.setTrackSelector(trackSelector);
+      return this;
+    }
+
+    /**
+     * @see TestExoPlayerBuilder#setLoadControl(LoadControl)
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    public Builder setLoadControl(LoadControl loadControl) {
+      testPlayerBuilder.setLoadControl(loadControl);
+      return this;
+    }
+
+    /**
+     * @see TestExoPlayerBuilder#setBandwidthMeter(BandwidthMeter)
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
+    public Builder setBandwidthMeter(BandwidthMeter bandwidthMeter) {
+      this.testPlayerBuilder.setBandwidthMeter(bandwidthMeter);
+      return this;
+    }
+
+    /**
+     * @see TestExoPlayerBuilder#setRenderers(Renderer...)
+     * @return This builder.
+     */
+    @CanIgnoreReturnValue
     public Builder setRenderers(Renderer... renderers) {
-      assertThat(renderersFactory).isNull();
-      this.renderers = renderers;
+      testPlayerBuilder.setRenderers(renderers);
       return this;
     }
 
     /**
-     * Sets the {@link RenderersFactory} to be used by the test runner. The default factory creates
-     * all renderers set by {@link #setRenderers(Renderer...)}. Setting the renderer factory is not
-     * allowed after a call to {@link #setRenderers(Renderer...)}.
-     *
-     * @param renderersFactory A {@link RenderersFactory} to be used by the test runner.
+     * @see TestExoPlayerBuilder#setRenderersFactory(RenderersFactory)
      * @return This builder.
      */
+    @CanIgnoreReturnValue
     public Builder setRenderersFactory(RenderersFactory renderersFactory) {
-      assertThat(renderers).isNull();
-      this.renderersFactory = renderersFactory;
+      testPlayerBuilder.setRenderersFactory(renderersFactory);
       return this;
     }
 
     /**
-     * Sets the {@link Clock} to be used by the test runner. The default value is a {@link
-     * AutoAdvancingFakeClock}.
-     *
-     * @param clock A {@link Clock} to be used by the test runner.
+     * @see TestExoPlayerBuilder#setClock(Clock)
      * @return This builder.
      */
+    @CanIgnoreReturnValue
     public Builder setClock(Clock clock) {
-      this.clock = clock;
+      testPlayerBuilder.setClock(clock);
       return this;
     }
 
     /**
      * Sets an {@link ActionSchedule} to be run by the test runner. The first action will be
-     * executed immediately before {@link SimpleExoPlayer#prepare(MediaSource)}.
+     * executed immediately before {@link ExoPlayer#prepare()}.
      *
      * @param actionSchedule An {@link ActionSchedule} to be used by the test runner.
      * @return This builder.
      */
+    @CanIgnoreReturnValue
     public Builder setActionSchedule(ActionSchedule actionSchedule) {
       this.actionSchedule = actionSchedule;
       return this;
     }
 
     /**
-     * Sets an {@link Player.EventListener} to be registered to listen to player events.
+     * Sets the video {@link Surface}. The default value is {@code null}.
      *
-     * @param eventListener A {@link Player.EventListener} to be registered by the test runner to
-     *     listen to player events.
+     * @param surface The {@link Surface} to be used by the player.
      * @return This builder.
      */
-    public Builder setEventListener(Player.EventListener eventListener) {
-      this.eventListener = eventListener;
+    @CanIgnoreReturnValue
+    public Builder setVideoSurface(Surface surface) {
+      this.surface = surface;
       return this;
     }
 
     /**
-     * Sets a {@link VideoRendererEventListener} to be registered.
+     * Sets an {@link Player.Listener} to be registered to listen to player events.
      *
-     * @param eventListener A {@link VideoRendererEventListener} to be registered.
+     * @param playerListener A {@link Player.Listener} to be registered by the test runner to listen
+     *     to player events.
      * @return This builder.
      */
-    public Builder setVideoRendererEventListener(VideoRendererEventListener eventListener) {
-      this.videoRendererEventListener = eventListener;
-      return this;
-    }
-
-    /**
-     * Sets an {@link AudioRendererEventListener} to be registered.
-     *
-     * @param eventListener An {@link AudioRendererEventListener} to be registered.
-     * @return This builder.
-     */
-    public Builder setAudioRendererEventListener(AudioRendererEventListener eventListener) {
-      this.audioRendererEventListener = eventListener;
+    @CanIgnoreReturnValue
+    public Builder setPlayerListener(Player.Listener playerListener) {
+      this.playerListener = playerListener;
       return this;
     }
 
@@ -270,6 +324,7 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
      * @param analyticsListener An {@link AnalyticsListener} to be registered.
      * @return This builder.
      */
+    @CanIgnoreReturnValue
     public Builder setAnalyticsListener(AnalyticsListener analyticsListener) {
       this.analyticsListener = analyticsListener;
       return this;
@@ -277,13 +332,14 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
 
     /**
      * Sets the number of times the test runner is expected to reach the {@link Player#STATE_ENDED}
-     * or {@link Player#STATE_IDLE}. The default is 1. This affects how long
-     * {@link ExoPlayerTestRunner#blockUntilEnded(long)} waits.
+     * or {@link Player#STATE_IDLE}. The default is 1. This affects how long {@link
+     * ExoPlayerTestRunner#blockUntilEnded(long)} waits.
      *
      * @param expectedPlayerEndedCount The number of times the player is expected to reach the ended
      *     or idle state.
      * @return This builder.
      */
+    @CanIgnoreReturnValue
     public Builder setExpectedPlayerEndedCount(int expectedPlayerEndedCount) {
       this.expectedPlayerEndedCount = expectedPlayerEndedCount;
       return this;
@@ -295,158 +351,155 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
      * @return The built {@link ExoPlayerTestRunner}.
      */
     public ExoPlayerTestRunner build() {
-      if (supportedFormats == null) {
-        supportedFormats = new Format[] {VIDEO_FORMAT};
-      }
-      if (trackSelector == null) {
-        trackSelector = new DefaultTrackSelector();
-      }
-      if (renderersFactory == null) {
-        if (renderers == null) {
-          renderers = new Renderer[] {new FakeRenderer(supportedFormats)};
-        }
-        renderersFactory =
-            new RenderersFactory() {
-              @Override
-              public Renderer[] createRenderers(
-                  android.os.Handler eventHandler,
-                  VideoRendererEventListener videoRendererEventListener,
-                  AudioRendererEventListener audioRendererEventListener,
-                  TextOutput textRendererOutput,
-                  MetadataOutput metadataRendererOutput,
-                  DrmSessionManager<FrameworkMediaCrypto> drmSessionManager) {
-                return renderers;
-              }
-            };
-      }
-      if (loadControl == null) {
-        loadControl = new DefaultLoadControl();
-      }
-      if (clock == null) {
-        clock = new AutoAdvancingFakeClock();
-      }
-      if (mediaSource == null) {
+      if (mediaSources.isEmpty() && !skipSettingMediaSources) {
         if (timeline == null) {
-          timeline = new FakeTimeline(1);
+          timeline = new FakeTimeline(/* windowCount= */ 1, manifest);
         }
-        mediaSource = new FakeMediaSource(timeline, manifest, supportedFormats);
+        mediaSources.add(new FakeMediaSource(timeline, supportedFormats));
       }
       if (expectedPlayerEndedCount == null) {
         expectedPlayerEndedCount = 1;
       }
       return new ExoPlayerTestRunner(
-          clock,
-          mediaSource,
-          renderersFactory,
-          trackSelector,
-          loadControl,
+          testPlayerBuilder,
+          mediaSources,
+          skipSettingMediaSources,
+          initialMediaItemIndex,
+          initialPositionMs,
+          surface,
           actionSchedule,
-          eventListener,
-          videoRendererEventListener,
-          audioRendererEventListener,
+          playerListener,
           analyticsListener,
-          expectedPlayerEndedCount);
+          expectedPlayerEndedCount,
+          pauseAtEndOfMediaItems);
     }
   }
 
-  private final Clock clock;
-  private final MediaSource mediaSource;
-  private final RenderersFactory renderersFactory;
-  private final DefaultTrackSelector trackSelector;
-  private final LoadControl loadControl;
-  private final @Nullable ActionSchedule actionSchedule;
-  private final @Nullable Player.EventListener eventListener;
-  private final @Nullable VideoRendererEventListener videoRendererEventListener;
-  private final @Nullable AudioRendererEventListener audioRendererEventListener;
-  private final @Nullable AnalyticsListener analyticsListener;
+  private final TestExoPlayerBuilder playerBuilder;
+  private final List<MediaSource> mediaSources;
+  private final boolean skipSettingMediaSources;
+  private final int initialMediaItemIndex;
+  private final long initialPositionMs;
+  @Nullable private final Surface surface;
+  @Nullable private final ActionSchedule actionSchedule;
+  @Nullable private final Player.Listener playerListener;
+  @Nullable private final AnalyticsListener analyticsListener;
 
+  private final Clock clock;
   private final HandlerThread playerThread;
   private final HandlerWrapper handler;
   private final CountDownLatch endedCountDownLatch;
   private final CountDownLatch actionScheduleFinishedCountDownLatch;
   private final ArrayList<Timeline> timelines;
-  private final ArrayList<Object> manifests;
   private final ArrayList<Integer> timelineChangeReasons;
+  private final ArrayList<MediaItem> mediaItems;
+  private final ArrayList<Integer> mediaItemTransitionReasons;
   private final ArrayList<Integer> periodIndices;
   private final ArrayList<Integer> discontinuityReasons;
+  private final ArrayList<Integer> playbackStates;
+  private final boolean pauseAtEndOfMediaItems;
 
-  private SimpleExoPlayer player;
+  private ExoPlayer player;
   private Exception exception;
-  private TrackGroupArray trackGroups;
   private boolean playerWasPrepared;
 
   private ExoPlayerTestRunner(
-      Clock clock,
-      MediaSource mediaSource,
-      RenderersFactory renderersFactory,
-      DefaultTrackSelector trackSelector,
-      LoadControl loadControl,
+      TestExoPlayerBuilder playerBuilder,
+      List<MediaSource> mediaSources,
+      boolean skipSettingMediaSources,
+      int initialMediaItemIndex,
+      long initialPositionMs,
+      @Nullable Surface surface,
       @Nullable ActionSchedule actionSchedule,
-      @Nullable Player.EventListener eventListener,
-      @Nullable VideoRendererEventListener videoRendererEventListener,
-      @Nullable AudioRendererEventListener audioRendererEventListener,
+      @Nullable Player.Listener playerListener,
       @Nullable AnalyticsListener analyticsListener,
-      int expectedPlayerEndedCount) {
-    this.clock = clock;
-    this.mediaSource = mediaSource;
-    this.renderersFactory = renderersFactory;
-    this.trackSelector = trackSelector;
-    this.loadControl = loadControl;
+      int expectedPlayerEndedCount,
+      boolean pauseAtEndOfMediaItems) {
+    this.playerBuilder = playerBuilder;
+    this.mediaSources = mediaSources;
+    this.skipSettingMediaSources = skipSettingMediaSources;
+    this.initialMediaItemIndex = initialMediaItemIndex;
+    this.initialPositionMs = initialPositionMs;
+    this.surface = surface;
     this.actionSchedule = actionSchedule;
-    this.eventListener = eventListener;
-    this.videoRendererEventListener = videoRendererEventListener;
-    this.audioRendererEventListener = audioRendererEventListener;
+    this.playerListener = playerListener;
     this.analyticsListener = analyticsListener;
-    this.timelines = new ArrayList<>();
-    this.manifests = new ArrayList<>();
-    this.timelineChangeReasons = new ArrayList<>();
-    this.periodIndices = new ArrayList<>();
-    this.discontinuityReasons = new ArrayList<>();
-    this.endedCountDownLatch = new CountDownLatch(expectedPlayerEndedCount);
-    this.actionScheduleFinishedCountDownLatch = new CountDownLatch(actionSchedule != null ? 1 : 0);
-    this.playerThread = new HandlerThread("ExoPlayerTest thread");
+    this.clock = playerBuilder.getClock();
+    timelines = new ArrayList<>();
+    timelineChangeReasons = new ArrayList<>();
+    mediaItems = new ArrayList<>();
+    mediaItemTransitionReasons = new ArrayList<>();
+    periodIndices = new ArrayList<>();
+    discontinuityReasons = new ArrayList<>();
+    playbackStates = new ArrayList<>();
+    endedCountDownLatch = new CountDownLatch(expectedPlayerEndedCount);
+    actionScheduleFinishedCountDownLatch = new CountDownLatch(actionSchedule != null ? 1 : 0);
+    playerThread = new HandlerThread("ExoPlayerTest thread");
     playerThread.start();
-    this.handler = clock.createHandler(playerThread.getLooper(), /* callback= */ null);
+    handler = clock.createHandler(playerThread.getLooper(), /* callback= */ null);
+    this.pauseAtEndOfMediaItems = pauseAtEndOfMediaItems;
   }
 
   // Called on the test thread to run the test.
 
   /**
    * Starts the test runner on its own thread. This will trigger the creation of the player, the
-   * listener registration, the start of the action schedule, and the preparation of the player
-   * with the provided media source.
+   * listener registration, the start of the action schedule, the initial set of media items and the
+   * preparation of the player.
    *
    * @return This test runner.
    */
+  @CanIgnoreReturnValue
   public ExoPlayerTestRunner start() {
+    return start(/* doPrepare= */ true);
+  }
+
+  /**
+   * Starts the test runner on its own thread. This will trigger the creation of the player, the
+   * listener registration, the start of the action schedule and the initial set of media items.
+   *
+   * @param doPrepare Whether the player should be prepared.
+   * @return This test runner.
+   */
+  @CanIgnoreReturnValue
+  public ExoPlayerTestRunner start(boolean doPrepare) {
     handler.post(
-        new Runnable() {
-          @Override
-          public void run() {
-            try {
-              player = new TestSimpleExoPlayer(renderersFactory, trackSelector, loadControl, clock);
-              player.addListener(ExoPlayerTestRunner.this);
-              if (eventListener != null) {
-                player.addListener(eventListener);
-              }
-              if (videoRendererEventListener != null) {
-                player.addVideoDebugListener(videoRendererEventListener);
-              }
-              if (audioRendererEventListener != null) {
-                player.addAudioDebugListener(audioRendererEventListener);
-              }
-              if (analyticsListener != null) {
-                player.addAnalyticsListener(analyticsListener);
-              }
-              player.setPlayWhenReady(true);
-              if (actionSchedule != null) {
-                actionSchedule.start(
-                    player, trackSelector, null, handler, ExoPlayerTestRunner.this);
-              }
-              player.prepare(mediaSource);
-            } catch (Exception e) {
-              handleException(e);
+        () -> {
+          try {
+            player = playerBuilder.setLooper(Looper.myLooper()).build();
+            if (surface != null) {
+              player.setVideoSurface(surface);
             }
+            if (pauseAtEndOfMediaItems) {
+              player.setPauseAtEndOfMediaItems(true);
+            }
+            player.addListener(ExoPlayerTestRunner.this);
+            if (playerListener != null) {
+              player.addListener(playerListener);
+            }
+            if (analyticsListener != null) {
+              player.addAnalyticsListener(analyticsListener);
+            }
+            player.play();
+            if (actionSchedule != null) {
+              actionSchedule.start(
+                  player,
+                  playerBuilder.getTrackSelector(),
+                  surface,
+                  handler,
+                  /* callback= */ ExoPlayerTestRunner.this);
+            }
+            if (initialMediaItemIndex != C.INDEX_UNSET) {
+              player.seekTo(initialMediaItemIndex, initialPositionMs);
+            }
+            if (!skipSettingMediaSources) {
+              player.setMediaSources(mediaSources, /* resetPosition= */ false);
+            }
+            if (doPrepare) {
+              player.prepare();
+            }
+          } catch (Exception e) {
+            handleException(e);
           }
         });
     return this;
@@ -463,8 +516,10 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
    * @return This test runner.
    * @throws Exception If any exception occurred during playback, release, or due to a timeout.
    */
+  @CanIgnoreReturnValue
   public ExoPlayerTestRunner blockUntilEnded(long timeoutMs) throws Exception {
-    if (!endedCountDownLatch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+    clock.onThreadBlocked();
+    if (!endedCountDownLatch.await(timeoutMs, MILLISECONDS)) {
       exception = new TimeoutException("Test playback timed out waiting for playback to end.");
     }
     release();
@@ -484,9 +539,11 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
    * @throws TimeoutException If the action schedule did not finish within the specified timeout.
    * @throws InterruptedException If the test thread gets interrupted while waiting.
    */
+  @CanIgnoreReturnValue
   public ExoPlayerTestRunner blockUntilActionScheduleFinished(long timeoutMs)
       throws TimeoutException, InterruptedException {
-    if (!actionScheduleFinishedCountDownLatch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+    clock.onThreadBlocked();
+    if (!actionScheduleFinishedCountDownLatch.await(timeoutMs, MILLISECONDS)) {
       throw new TimeoutException("Test playback timed out waiting for action schedule to finish.");
     }
     return this;
@@ -495,49 +552,37 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
   // Assertions called on the test thread after test finished.
 
   /**
-   * Asserts that the timelines reported by
-   * {@link Player.EventListener#onTimelineChanged(Timeline, Object, int)} are equal to the provided
-   * timelines.
+   * Asserts that the timelines reported by {@link Player.Listener#onTimelineChanged(Timeline, int)}
+   * are the same to the provided timelines. This assert differs from testing equality by not
+   * comparing period ids which may be different due to id mapping of child source period ids.
    *
    * @param timelines A list of expected {@link Timeline}s.
    */
-  public void assertTimelinesEqual(Timeline... timelines) {
-    assertThat(this.timelines).containsExactlyElementsIn(Arrays.asList(timelines)).inOrder();
-  }
-
-  /**
-   * Asserts that the manifests reported by
-   * {@link Player.EventListener#onTimelineChanged(Timeline, Object, int)} are equal to the provided
-   * manifest.
-   *
-   * @param manifests A list of expected manifests.
-   */
-  public void assertManifestsEqual(Object... manifests) {
-    assertThat(this.manifests).containsExactlyElementsIn(Arrays.asList(manifests)).inOrder();
+  public void assertTimelinesSame(Timeline... timelines) {
+    TestUtil.assertTimelinesSame(
+        ImmutableList.copyOf(this.timelines), ImmutableList.copyOf(timelines));
   }
 
   /**
    * Asserts that the timeline change reasons reported by {@link
-   * Player.EventListener#onTimelineChanged(Timeline, Object, int)} are equal to the provided
-   * timeline change reasons.
+   * Player.Listener#onTimelineChanged(Timeline, int)} are equal to the provided timeline change
+   * reasons.
    */
   public void assertTimelineChangeReasonsEqual(Integer... reasons) {
     assertThat(timelineChangeReasons).containsExactlyElementsIn(Arrays.asList(reasons)).inOrder();
   }
 
   /**
-   * Asserts that the last track group array reported by
-   * {@link Player.EventListener#onTracksChanged(TrackGroupArray, TrackSelectionArray)} is equal to
-   * the provided track group array.
-   *
-   * @param trackGroupArray The expected {@link TrackGroupArray}.
+   * Asserts that the playback states reported by {@link
+   * Player.Listener#onPlaybackStateChanged(int)} are equal to the provided playback states.
    */
-  public void assertTrackGroupsEqual(TrackGroupArray trackGroupArray) {
-    assertThat(this.trackGroups).isEqualTo(trackGroupArray);
+  public void assertPlaybackStatesEqual(Integer... states) {
+    assertThat(playbackStates).containsExactlyElementsIn(states).inOrder();
   }
 
   /**
-   * Asserts that {@link Player.EventListener#onPositionDiscontinuity(int)} was not called.
+   * Asserts that {@link Player.Listener#onPositionDiscontinuity(Player.PositionInfo,
+   * Player.PositionInfo, int)} was not called.
    */
   public void assertNoPositionDiscontinuities() {
     assertThat(discontinuityReasons).isEmpty();
@@ -545,7 +590,8 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
 
   /**
    * Asserts that the discontinuity reasons reported by {@link
-   * Player.EventListener#onPositionDiscontinuity(int)} are equal to the provided values.
+   * Player.Listener#onPositionDiscontinuity(Player.PositionInfo, Player.PositionInfo, int)} are
+   * equal to the provided values.
    *
    * @param discontinuityReasons The expected discontinuity reasons.
    */
@@ -572,20 +618,19 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
   // Private implementation details.
 
   private void release() throws InterruptedException {
-    handler.post(new Runnable() {
-      @Override
-      public void run() {
-        try {
-          if (player != null) {
-            player.release();
+    handler.post(
+        () -> {
+          try {
+            if (player != null) {
+              player.release();
+            }
+          } catch (Exception e) {
+            handleException(e);
+          } finally {
+            playerThread.quit();
           }
-        } catch (Exception e) {
-          handleException(e);
-        } finally {
-          playerThread.quit();
-        }
-      }
-    });
+        });
+    clock.onThreadBlocked();
     playerThread.join();
   }
 
@@ -598,26 +643,29 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
     }
   }
 
-  // Player.EventListener
+  // Player.Listener
 
   @Override
-  public void onTimelineChanged(Timeline timeline, Object manifest,
-      @Player.TimelineChangeReason int reason) {
-    timelines.add(timeline);
-    manifests.add(manifest);
+  public void onTimelineChanged(Timeline timeline, @Player.TimelineChangeReason int reason) {
     timelineChangeReasons.add(reason);
-    if (reason == Player.TIMELINE_CHANGE_REASON_PREPARED) {
-      periodIndices.add(player.getCurrentPeriodIndex());
+    timelines.add(timeline);
+    int currentIndex = player.getCurrentPeriodIndex();
+    if (periodIndices.isEmpty() || periodIndices.get(periodIndices.size() - 1) != currentIndex) {
+      // Ignore timeline changes that do not change the period index.
+      periodIndices.add(currentIndex);
     }
   }
 
   @Override
-  public void onTracksChanged(TrackGroupArray trackGroups, TrackSelectionArray trackSelections) {
-    this.trackGroups = trackGroups;
+  public void onMediaItemTransition(
+      @Nullable MediaItem mediaItem, @Player.MediaItemTransitionReason int reason) {
+    mediaItems.add(mediaItem);
+    mediaItemTransitionReasons.add(reason);
   }
 
   @Override
-  public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
+  public void onPlaybackStateChanged(@Player.State int playbackState) {
+    playbackStates.add(playbackState);
     playerWasPrepared |= playbackState != Player.STATE_IDLE;
     if (playbackState == Player.STATE_ENDED
         || (playbackState == Player.STATE_IDLE && playerWasPrepared)) {
@@ -626,15 +674,20 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
   }
 
   @Override
-  public void onPlayerError(ExoPlaybackException error) {
+  public void onPlayerError(PlaybackException error) {
     handleException(error);
   }
 
   @Override
-  public void onPositionDiscontinuity(@Player.DiscontinuityReason int reason) {
+  public void onPositionDiscontinuity(
+      Player.PositionInfo oldPosition,
+      Player.PositionInfo newPosition,
+      @Player.DiscontinuityReason int reason) {
     discontinuityReasons.add(reason);
     int currentIndex = player.getCurrentPeriodIndex();
-    if (reason == Player.DISCONTINUITY_REASON_PERIOD_TRANSITION
+    if ((reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION
+            && oldPosition.adGroupIndex != C.INDEX_UNSET
+            && newPosition.adGroupIndex != C.INDEX_UNSET)
         || periodIndices.isEmpty()
         || periodIndices.get(periodIndices.size() - 1) != currentIndex) {
       // Ignore seek or internal discontinuities within a period.
@@ -647,23 +700,5 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
   @Override
   public void onActionScheduleFinished() {
     actionScheduleFinishedCountDownLatch.countDown();
-  }
-
-  /** SimpleExoPlayer implementation using a custom Clock. */
-  private static final class TestSimpleExoPlayer extends SimpleExoPlayer {
-
-    public TestSimpleExoPlayer(
-        RenderersFactory renderersFactory,
-        TrackSelector trackSelector,
-        LoadControl loadControl,
-        Clock clock) {
-      super(
-          renderersFactory,
-          trackSelector,
-          loadControl,
-          /* drmSessionManager= */ null,
-          new AnalyticsCollector.Factory(),
-          clock);
-    }
   }
 }

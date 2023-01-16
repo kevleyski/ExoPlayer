@@ -15,29 +15,28 @@
  */
 package com.google.android.exoplayer2.source.chunk;
 
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.extractor.DefaultExtractorInput;
 import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
+import com.google.android.exoplayer2.source.chunk.ChunkExtractor.TrackOutputProvider;
 import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.DataSourceUtil;
 import com.google.android.exoplayer2.upstream.DataSpec;
-import com.google.android.exoplayer2.util.Assertions;
-import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 
-/**
- * A {@link BaseMediaChunk} that uses an {@link Extractor} to decode sample data.
- */
+/** A {@link BaseMediaChunk} that uses an {@link Extractor} to decode sample data. */
 public class ContainerMediaChunk extends BaseMediaChunk {
 
   private final int chunkCount;
   private final long sampleOffsetUs;
-  private final ChunkExtractorWrapper extractorWrapper;
+  private final ChunkExtractor chunkExtractor;
 
-  private volatile int bytesLoaded;
+  private long nextLoadPosition;
   private volatile boolean loadCanceled;
-  private volatile boolean loadCompleted;
+  private boolean loadCompleted;
 
   /**
    * @param dataSource The source from which the data should be loaded.
@@ -47,28 +46,31 @@ public class ContainerMediaChunk extends BaseMediaChunk {
    * @param trackSelectionData See {@link #trackSelectionData}.
    * @param startTimeUs The start time of the media contained by the chunk, in microseconds.
    * @param endTimeUs The end time of the media contained by the chunk, in microseconds.
-   * @param seekTimeUs The media time from which output will begin, or {@link C#TIME_UNSET} if the
-   *     whole chunk should be output.
+   * @param clippedStartTimeUs The time in the chunk from which output will begin, or {@link
+   *     C#TIME_UNSET} to output from the start of the chunk.
+   * @param clippedEndTimeUs The time in the chunk from which output will end, or {@link
+   *     C#TIME_UNSET} to output to the end of the chunk.
    * @param chunkIndex The index of the chunk, or {@link C#INDEX_UNSET} if it is not known.
    * @param chunkCount The number of chunks in the underlying media that are spanned by this
    *     instance. Normally equal to one, but may be larger if multiple chunks as defined by the
    *     underlying media are being merged into a single load.
    * @param sampleOffsetUs An offset to add to the sample timestamps parsed by the extractor.
-   * @param extractorWrapper A wrapped extractor to use for parsing the data.
+   * @param chunkExtractor A wrapped extractor to use for parsing the data.
    */
   public ContainerMediaChunk(
       DataSource dataSource,
       DataSpec dataSpec,
       Format trackFormat,
-      int trackSelectionReason,
-      Object trackSelectionData,
+      @C.SelectionReason int trackSelectionReason,
+      @Nullable Object trackSelectionData,
       long startTimeUs,
       long endTimeUs,
-      long seekTimeUs,
+      long clippedStartTimeUs,
+      long clippedEndTimeUs,
       long chunkIndex,
       int chunkCount,
       long sampleOffsetUs,
-      ChunkExtractorWrapper extractorWrapper) {
+      ChunkExtractor chunkExtractor) {
     super(
         dataSource,
         dataSpec,
@@ -77,11 +79,12 @@ public class ContainerMediaChunk extends BaseMediaChunk {
         trackSelectionData,
         startTimeUs,
         endTimeUs,
-        seekTimeUs,
+        clippedStartTimeUs,
+        clippedEndTimeUs,
         chunkIndex);
     this.chunkCount = chunkCount;
     this.sampleOffsetUs = sampleOffsetUs;
-    this.extractorWrapper = extractorWrapper;
+    this.chunkExtractor = chunkExtractor;
   }
 
   @Override
@@ -94,11 +97,6 @@ public class ContainerMediaChunk extends BaseMediaChunk {
     return loadCompleted;
   }
 
-  @Override
-  public final long bytesLoaded() {
-    return bytesLoaded;
-  }
-
   // Loadable implementation.
 
   @Override
@@ -108,34 +106,42 @@ public class ContainerMediaChunk extends BaseMediaChunk {
 
   @SuppressWarnings("NonAtomicVolatileUpdate")
   @Override
-  public final void load() throws IOException, InterruptedException {
-    DataSpec loadDataSpec = dataSpec.subrange(bytesLoaded);
+  public final void load() throws IOException {
+    if (nextLoadPosition == 0) {
+      // Configure the output and set it as the target for the extractor wrapper.
+      BaseMediaChunkOutput output = getOutput();
+      output.setSampleOffsetUs(sampleOffsetUs);
+      chunkExtractor.init(
+          getTrackOutputProvider(output),
+          clippedStartTimeUs == C.TIME_UNSET ? C.TIME_UNSET : (clippedStartTimeUs - sampleOffsetUs),
+          clippedEndTimeUs == C.TIME_UNSET ? C.TIME_UNSET : (clippedEndTimeUs - sampleOffsetUs));
+    }
     try {
       // Create and open the input.
-      ExtractorInput input = new DefaultExtractorInput(dataSource,
-          loadDataSpec.absoluteStreamPosition, dataSource.open(loadDataSpec));
-      if (bytesLoaded == 0) {
-        // Configure the output and set it as the target for the extractor wrapper.
-        BaseMediaChunkOutput output = getOutput();
-        output.setSampleOffsetUs(sampleOffsetUs);
-        extractorWrapper.init(
-            output, seekTimeUs == C.TIME_UNSET ? 0 : (seekTimeUs - sampleOffsetUs));
-      }
+      DataSpec loadDataSpec = dataSpec.subrange(nextLoadPosition);
+      ExtractorInput input =
+          new DefaultExtractorInput(
+              dataSource, loadDataSpec.position, dataSource.open(loadDataSpec));
       // Load and decode the sample data.
       try {
-        Extractor extractor = extractorWrapper.extractor;
-        int result = Extractor.RESULT_CONTINUE;
-        while (result == Extractor.RESULT_CONTINUE && !loadCanceled) {
-          result = extractor.read(input, null);
-        }
-        Assertions.checkState(result != Extractor.RESULT_SEEK);
+        while (!loadCanceled && chunkExtractor.read(input)) {}
       } finally {
-        bytesLoaded = (int) (input.getPosition() - dataSpec.absoluteStreamPosition);
+        nextLoadPosition = input.getPosition() - dataSpec.position;
       }
     } finally {
-      Util.closeQuietly(dataSource);
+      DataSourceUtil.closeQuietly(dataSource);
     }
-    loadCompleted = true;
+    loadCompleted = !loadCanceled;
   }
 
+  /**
+   * Returns the {@link TrackOutputProvider} to be used by the wrapped extractor.
+   *
+   * @param baseMediaChunkOutput The {@link BaseMediaChunkOutput} most recently passed to {@link
+   *     #init(BaseMediaChunkOutput)}.
+   * @return A {@link TrackOutputProvider} to be used by the wrapped extractor.
+   */
+  protected TrackOutputProvider getTrackOutputProvider(BaseMediaChunkOutput baseMediaChunkOutput) {
+    return baseMediaChunkOutput;
+  }
 }

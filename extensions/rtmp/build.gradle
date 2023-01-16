@@ -11,23 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-apply from: '../../constants.gradle'
-apply plugin: 'com.android.library'
-
-android {
-    compileSdkVersion project.ext.compileSdkVersion
-    buildToolsVersion project.ext.buildToolsVersion
-
-    defaultConfig {
-        minSdkVersion 15
-        targetSdkVersion project.ext.targetSdkVersion
-    }
-}
+apply from: "$gradle.ext.exoplayerSettingsDir/common_library_config.gradle"
 
 dependencies {
-    implementation project(modulePrefix + 'library-core')
-    implementation 'net.butterflytv.utils:rtmp-client:3.0.1'
-    implementation 'com.android.support:support-annotations:' + supportLibraryVersion
+    implementation project(modulePrefix + 'library-common')
+    implementation project(modulePrefix + 'library-datasource')
+    implementation 'io.antmedia:rtmp-client:3.2.0'
+    implementation 'androidx.annotation:annotation:' + androidxAnnotationVersion
+    compileOnly 'com.google.errorprone:error_prone_annotations:' + errorProneVersion
+    compileOnly 'org.jetbrains.kotlin:kotlin-annotations-jvm:' + kotlinAnnotationsVersion
+    testImplementation project(modulePrefix + 'library-core')
+    testImplementation project(modulePrefix + 'testutils')
+    testImplementation 'org.robolectric:robolectric:' + robolectricVersion
 }
 
 ext {
@@ -36,7 +31,7 @@ ext {
 apply from: '../../javadoc_library.gradle'
 
 ext {
-    releaseArtifact = 'extension-rtmp'
+    releaseArtifactId = 'extension-rtmp'
     releaseDescription = 'RTMP extension for ExoPlayer.'
 }
 apply from: '../../publish.gradle'

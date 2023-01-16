@@ -18,30 +18,41 @@ package com.google.android.exoplayer2.source.dash.manifest;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.net.Uri;
+import androidx.annotation.Nullable;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.source.dash.manifest.SegmentBase.SingleSegmentBase;
+import com.google.common.collect.ImmutableList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
 
 /** Unit tests for {@link DashManifest}. */
-@RunWith(RobolectricTestRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class DashManifestTest {
 
-  private static final UtcTimingElement DUMMY_UTC_TIMING = new UtcTimingElement("", "");
-  private static final SingleSegmentBase DUMMY_SEGMENT_BASE = new SingleSegmentBase();
-  private static final Format DUMMY_FORMAT = Format.createSampleFormat("", "", 0);
+  private static final UtcTimingElement UTC_TIMING = new UtcTimingElement("", "");
+  private static final SingleSegmentBase SEGMENT_BASE = new SingleSegmentBase();
+  private static final Format FORMAT = new Format.Builder().build();
 
   @Test
-  public void testCopy() throws Exception {
+  public void copy() {
     Representation[][][] representations = newRepresentations(3, 2, 3);
+    ServiceDescriptionElement serviceDescriptionElement =
+        new ServiceDescriptionElement(
+            /* targetOffsetMs= */ 20,
+            /* minOffsetMs= */ 10,
+            /* maxOffsetMs= */ 40,
+            /* minPlaybackSpeed= */ 0.9f,
+            /* maxPlaybackSpeed= */ 1.1f);
     DashManifest sourceManifest =
         newDashManifest(
             10,
+            serviceDescriptionElement,
             newPeriod(
                 "1",
                 1,
@@ -58,17 +69,17 @@ public class DashManifestTest {
                 newAdaptationSet(8, representations[2][0]),
                 newAdaptationSet(9, representations[2][1])));
 
-    List<RepresentationKey> keys =
+    List<StreamKey> keys =
         Arrays.asList(
-            new RepresentationKey(0, 0, 0),
-            new RepresentationKey(0, 0, 1),
-            new RepresentationKey(0, 1, 2),
-            new RepresentationKey(1, 0, 1),
-            new RepresentationKey(1, 1, 0),
-            new RepresentationKey(1, 1, 2),
-            new RepresentationKey(2, 0, 1),
-            new RepresentationKey(2, 0, 2),
-            new RepresentationKey(2, 1, 0));
+            new StreamKey(0, 0, 0),
+            new StreamKey(0, 0, 1),
+            new StreamKey(0, 1, 2),
+            new StreamKey(1, 0, 1),
+            new StreamKey(1, 1, 0),
+            new StreamKey(1, 1, 2),
+            new StreamKey(2, 0, 1),
+            new StreamKey(2, 0, 2),
+            new StreamKey(2, 1, 0));
     // Keys don't need to be in any particular order
     Collections.shuffle(keys, new Random(0));
 
@@ -77,6 +88,7 @@ public class DashManifestTest {
     DashManifest expectedManifest =
         newDashManifest(
             10,
+            serviceDescriptionElement,
             newPeriod(
                 "1",
                 1,
@@ -96,32 +108,34 @@ public class DashManifestTest {
   }
 
   @Test
-  public void testCopySameAdaptationIndexButDifferentPeriod() throws Exception {
+  public void copySameAdaptationIndexButDifferentPeriod() {
     Representation[][][] representations = newRepresentations(2, 1, 1);
     DashManifest sourceManifest =
         newDashManifest(
             10,
+            /* serviceDescription= */ null,
             newPeriod("1", 1, newAdaptationSet(2, representations[0][0])),
             newPeriod("4", 4, newAdaptationSet(5, representations[1][0])));
 
     DashManifest copyManifest =
-        sourceManifest.copy(
-            Arrays.asList(new RepresentationKey(0, 0, 0), new RepresentationKey(1, 0, 0)));
+        sourceManifest.copy(Arrays.asList(new StreamKey(0, 0, 0), new StreamKey(1, 0, 0)));
 
     DashManifest expectedManifest =
         newDashManifest(
             10,
+            /* serviceDescription= */ null,
             newPeriod("1", 1, newAdaptationSet(2, representations[0][0])),
             newPeriod("4", 4, newAdaptationSet(5, representations[1][0])));
     assertManifestEquals(expectedManifest, copyManifest);
   }
 
   @Test
-  public void testCopySkipPeriod() throws Exception {
+  public void copySkipPeriod() {
     Representation[][][] representations = newRepresentations(3, 2, 3);
     DashManifest sourceManifest =
         newDashManifest(
             10,
+            /* serviceDescription= */ null,
             newPeriod(
                 "1",
                 1,
@@ -141,16 +155,17 @@ public class DashManifestTest {
     DashManifest copyManifest =
         sourceManifest.copy(
             Arrays.asList(
-                new RepresentationKey(0, 0, 0),
-                new RepresentationKey(0, 0, 1),
-                new RepresentationKey(0, 1, 2),
-                new RepresentationKey(2, 0, 1),
-                new RepresentationKey(2, 0, 2),
-                new RepresentationKey(2, 1, 0)));
+                new StreamKey(0, 0, 0),
+                new StreamKey(0, 0, 1),
+                new StreamKey(0, 1, 2),
+                new StreamKey(2, 0, 1),
+                new StreamKey(2, 0, 2),
+                new StreamKey(2, 1, 0)));
 
     DashManifest expectedManifest =
         newDashManifest(
             7,
+            /* serviceDescription= */ null,
             newPeriod(
                 "1",
                 1,
@@ -177,6 +192,7 @@ public class DashManifestTest {
     assertThat(actual.utcTiming).isEqualTo(expected.utcTiming);
     assertThat(actual.location).isEqualTo(expected.location);
     assertThat(actual.getPeriodCount()).isEqualTo(expected.getPeriodCount());
+    assertThat(actual.serviceDescription).isEqualTo(expected.serviceDescription);
     for (int i = 0; i < expected.getPeriodCount(); i++) {
       Period expectedPeriod = expected.getPeriod(i);
       Period actualPeriod = actual.getPeriod(i);
@@ -214,12 +230,29 @@ public class DashManifestTest {
   }
 
   private static Representation newRepresentation() {
-    return Representation.newInstance("", 0, DUMMY_FORMAT, "", DUMMY_SEGMENT_BASE);
+    return Representation.newInstance(
+        /* revisionId= */ 0,
+        FORMAT,
+        /* baseUrls= */ ImmutableList.of(new BaseUrl("")),
+        SEGMENT_BASE);
   }
 
-  private static DashManifest newDashManifest(int duration, Period... periods) {
+  private static DashManifest newDashManifest(
+      int duration, @Nullable ServiceDescriptionElement serviceDescription, Period... periods) {
     return new DashManifest(
-        0, duration, 1, false, 2, 3, 4, 12345, DUMMY_UTC_TIMING, Uri.EMPTY, Arrays.asList(periods));
+        /* availabilityStartTimeMs= */ 0,
+        duration,
+        /* minBufferTimeMs= */ 1,
+        /* dynamic= */ false,
+        /* minUpdatePeriodMs= */ 2,
+        /* timeShiftBufferDepthMs= */ 3,
+        /* suggestedPresentationDelayMs= */ 4,
+        /* publishTimeMs= */ 12345,
+        /* programInformation= */ null,
+        UTC_TIMING,
+        serviceDescription,
+        Uri.EMPTY,
+        Arrays.asList(periods));
   }
 
   private static Period newPeriod(String id, int startMs, AdaptationSet... adaptationSets) {
@@ -227,6 +260,12 @@ public class DashManifestTest {
   }
 
   private static AdaptationSet newAdaptationSet(int seed, Representation... representations) {
-    return new AdaptationSet(++seed, ++seed, Arrays.asList(representations), null, null);
+    return new AdaptationSet(
+        ++seed,
+        ++seed,
+        Arrays.asList(representations),
+        /* accessibilityDescriptors= */ Collections.emptyList(),
+        /* essentialProperties= */ Collections.emptyList(),
+        /* supplementalProperties= */ Collections.emptyList());
   }
 }

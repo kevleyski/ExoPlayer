@@ -16,13 +16,13 @@
 package com.google.android.exoplayer2.source.dash.offline;
 
 import android.net.Uri;
-import com.google.android.exoplayer2.C;
-import java.nio.charset.Charset;
+import com.google.common.base.Charsets;
 
 /** Data for DASH downloading tests. */
 /* package */ interface DashDownloadTestData {
 
-  Uri TEST_MPD_URI = Uri.parse("test.mpd");
+  String TEST_ID = "test.mpd";
+  Uri TEST_MPD_URI = Uri.parse(TEST_ID);
 
   byte[] TEST_MPD =
       ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -86,7 +86,7 @@ import java.nio.charset.Charset;
               + "        </AdaptationSet>\n"
               + "    </Period>\n"
               + "</MPD>")
-          .getBytes(Charset.forName(C.UTF8_NAME));
+          .getBytes(Charsets.UTF_8);
 
   byte[] TEST_MPD_NO_INDEX =
       ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -99,5 +99,5 @@ import java.nio.charset.Charset;
               + "        </AdaptationSet>\n"
               + "    </Period>\n"
               + "</MPD>")
-          .getBytes(Charset.forName(C.UTF8_NAME));
+          .getBytes(Charsets.UTF_8);
 }

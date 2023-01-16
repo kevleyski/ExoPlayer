@@ -15,48 +15,65 @@
  */
 package com.google.android.exoplayer2.source;
 
+import static com.google.android.exoplayer2.util.Assertions.checkStateNotNull;
+
 import android.os.Handler;
-import android.support.annotation.Nullable;
-import com.google.android.exoplayer2.ExoPlayer;
+import android.os.Looper;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.analytics.PlayerId;
+import com.google.android.exoplayer2.drm.DrmSessionEventListener;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import java.util.ArrayList;
+import java.util.HashSet;
 
 /**
  * Base {@link MediaSource} implementation to handle parallel reuse and to keep a list of {@link
  * MediaSourceEventListener}s.
  *
- * <p>Whenever an implementing subclass needs to provide a new timeline and/or manifest, it must
- * call {@link #refreshSourceInfo(Timeline, Object)} to notify all listeners.
+ * <p>Whenever an implementing subclass needs to provide a new timeline, it must call {@link
+ * #refreshSourceInfo(Timeline)} to notify all listeners.
  */
 public abstract class BaseMediaSource implements MediaSource {
 
-  private final ArrayList<SourceInfoRefreshListener> sourceInfoListeners;
+  private final ArrayList<MediaSourceCaller> mediaSourceCallers;
+  private final HashSet<MediaSourceCaller> enabledMediaSourceCallers;
   private final MediaSourceEventListener.EventDispatcher eventDispatcher;
+  private final DrmSessionEventListener.EventDispatcher drmEventDispatcher;
 
-  private ExoPlayer player;
-  private Timeline timeline;
-  private Object manifest;
+  @Nullable private Looper looper;
+  @Nullable private Timeline timeline;
+  @Nullable private PlayerId playerId;
 
   public BaseMediaSource() {
-    sourceInfoListeners = new ArrayList<>(/* initialCapacity= */ 1);
+    mediaSourceCallers = new ArrayList<>(/* initialCapacity= */ 1);
+    enabledMediaSourceCallers = new HashSet<>(/* initialCapacity= */ 1);
     eventDispatcher = new MediaSourceEventListener.EventDispatcher();
+    drmEventDispatcher = new DrmSessionEventListener.EventDispatcher();
   }
 
   /**
-   * Starts source preparation. This method is called at most once until the next call to {@link
+   * Starts source preparation and enables the source, see {@link #prepareSource(MediaSourceCaller,
+   * TransferListener, PlayerId)}. This method is called at most once until the next call to {@link
    * #releaseSourceInternal()}.
    *
-   * @param player The player for which this source is being prepared.
-   * @param isTopLevelSource Whether this source has been passed directly to {@link
-   *     ExoPlayer#prepare(MediaSource)} or {@link ExoPlayer#prepare(MediaSource, boolean,
-   *     boolean)}.
+   * @param mediaTransferListener The transfer listener which should be informed of any media data
+   *     transfers. May be null if no listener is available. Note that this listener should usually
+   *     be only informed of transfers related to the media loads and not of auxiliary loads for
+   *     manifests and other data.
    */
-  protected abstract void prepareSourceInternal(ExoPlayer player, boolean isTopLevelSource);
+  protected abstract void prepareSourceInternal(@Nullable TransferListener mediaTransferListener);
+
+  /** Enables the source, see {@link #enable(MediaSourceCaller)}. */
+  protected void enableInternal() {}
+
+  /** Disables the source, see {@link #disable(MediaSourceCaller)}. */
+  protected void disableInternal() {}
 
   /**
-   * Releases the source. This method is called exactly once after each call to {@link
-   * #prepareSourceInternal(ExoPlayer, boolean)}.
+   * Releases the source, see {@link #releaseSource(MediaSourceCaller)}. This method is called
+   * exactly once after each call to {@link #prepareSourceInternal(TransferListener)}.
    */
   protected abstract void releaseSourceInternal();
 
@@ -64,19 +81,17 @@ public abstract class BaseMediaSource implements MediaSource {
    * Updates timeline and manifest and notifies all listeners of the update.
    *
    * @param timeline The new {@link Timeline}.
-   * @param manifest The new manifest. May be null.
    */
-  protected final void refreshSourceInfo(Timeline timeline, @Nullable Object manifest) {
+  protected final void refreshSourceInfo(Timeline timeline) {
     this.timeline = timeline;
-    this.manifest = manifest;
-    for (SourceInfoRefreshListener listener : sourceInfoListeners) {
-      listener.onSourceInfoRefreshed(/* source= */ this, timeline, manifest);
+    for (MediaSourceCaller caller : mediaSourceCallers) {
+      caller.onSourceInfoRefreshed(/* source= */ this, timeline);
     }
   }
 
   /**
    * Returns a {@link MediaSourceEventListener.EventDispatcher} which dispatches all events to the
-   * registered listeners with the specified media period id.
+   * registered listeners with the specified {@link MediaPeriodId}.
    *
    * @param mediaPeriodId The {@link MediaPeriodId} to be reported with the events. May be null, if
    *     the events do not belong to a specific media period.
@@ -90,7 +105,7 @@ public abstract class BaseMediaSource implements MediaSource {
 
   /**
    * Returns a {@link MediaSourceEventListener.EventDispatcher} which dispatches all events to the
-   * registered listeners with the specified media period id and time offset.
+   * registered listeners with the specified {@link MediaPeriodId} and time offset.
    *
    * @param mediaPeriodId The {@link MediaPeriodId} to be reported with the events.
    * @param mediaTimeOffsetMs The offset to be added to all media times, in milliseconds.
@@ -98,13 +113,13 @@ public abstract class BaseMediaSource implements MediaSource {
    */
   protected final MediaSourceEventListener.EventDispatcher createEventDispatcher(
       MediaPeriodId mediaPeriodId, long mediaTimeOffsetMs) {
-    Assertions.checkArgument(mediaPeriodId != null);
+    Assertions.checkNotNull(mediaPeriodId);
     return eventDispatcher.withParameters(/* windowIndex= */ 0, mediaPeriodId, mediaTimeOffsetMs);
   }
 
   /**
    * Returns a {@link MediaSourceEventListener.EventDispatcher} which dispatches all events to the
-   * registered listeners with the specified window index, media period id and time offset.
+   * registered listeners with the specified window index, {@link MediaPeriodId} and time offset.
    *
    * @param windowIndex The timeline window index to be reported with the events.
    * @param mediaPeriodId The {@link MediaPeriodId} to be reported with the events. May be null, if
@@ -117,8 +132,52 @@ public abstract class BaseMediaSource implements MediaSource {
     return eventDispatcher.withParameters(windowIndex, mediaPeriodId, mediaTimeOffsetMs);
   }
 
+  /**
+   * Returns a {@link DrmSessionEventListener.EventDispatcher} which dispatches all events to the
+   * registered listeners with the specified {@link MediaPeriodId}
+   *
+   * @param mediaPeriodId The {@link MediaPeriodId} to be reported with the events. May be null, if
+   *     the events do not belong to a specific media period.
+   * @return An event dispatcher with pre-configured media period id.
+   */
+  protected final DrmSessionEventListener.EventDispatcher createDrmEventDispatcher(
+      @Nullable MediaPeriodId mediaPeriodId) {
+    return drmEventDispatcher.withParameters(/* windowIndex= */ 0, mediaPeriodId);
+  }
+
+  /**
+   * Returns a {@link DrmSessionEventListener.EventDispatcher} which dispatches all events to the
+   * registered listeners with the specified window index and {@link MediaPeriodId}.
+   *
+   * @param windowIndex The timeline window index to be reported with the events.
+   * @param mediaPeriodId The {@link MediaPeriodId} to be reported with the events. May be null, if
+   *     the events do not belong to a specific media period.
+   * @return An event dispatcher with pre-configured media period id and time offset.
+   */
+  protected final DrmSessionEventListener.EventDispatcher createDrmEventDispatcher(
+      int windowIndex, @Nullable MediaPeriodId mediaPeriodId) {
+    return drmEventDispatcher.withParameters(windowIndex, mediaPeriodId);
+  }
+
+  /** Returns whether the source is enabled. */
+  protected final boolean isEnabled() {
+    return !enabledMediaSourceCallers.isEmpty();
+  }
+
+  /**
+   * Returns the {@link PlayerId} of the player using this media source.
+   *
+   * <p>Must only be used when the media source is {@link #prepareSourceInternal(TransferListener)
+   * prepared}.
+   */
+  protected final PlayerId getPlayerId() {
+    return checkStateNotNull(playerId);
+  }
+
   @Override
   public final void addEventListener(Handler handler, MediaSourceEventListener eventListener) {
+    Assertions.checkNotNull(handler);
+    Assertions.checkNotNull(eventListener);
     eventDispatcher.addEventListener(handler, eventListener);
   }
 
@@ -128,26 +187,74 @@ public abstract class BaseMediaSource implements MediaSource {
   }
 
   @Override
+  public final void addDrmEventListener(Handler handler, DrmSessionEventListener eventListener) {
+    Assertions.checkNotNull(handler);
+    Assertions.checkNotNull(eventListener);
+    drmEventDispatcher.addEventListener(handler, eventListener);
+  }
+
+  @Override
+  public final void removeDrmEventListener(DrmSessionEventListener eventListener) {
+    drmEventDispatcher.removeEventListener(eventListener);
+  }
+
+  @SuppressWarnings("deprecation") // Overriding deprecated method to make it final.
+  @Override
   public final void prepareSource(
-      ExoPlayer player, boolean isTopLevelSource, SourceInfoRefreshListener listener) {
-    Assertions.checkArgument(this.player == null || this.player == player);
-    sourceInfoListeners.add(listener);
-    if (this.player == null) {
-      this.player = player;
-      prepareSourceInternal(player, isTopLevelSource);
+      MediaSourceCaller caller, @Nullable TransferListener mediaTransferListener) {
+    prepareSource(caller, mediaTransferListener, PlayerId.UNSET);
+  }
+
+  @Override
+  public final void prepareSource(
+      MediaSourceCaller caller,
+      @Nullable TransferListener mediaTransferListener,
+      PlayerId playerId) {
+    Looper looper = Looper.myLooper();
+    Assertions.checkArgument(this.looper == null || this.looper == looper);
+    this.playerId = playerId;
+    @Nullable Timeline timeline = this.timeline;
+    mediaSourceCallers.add(caller);
+    if (this.looper == null) {
+      this.looper = looper;
+      enabledMediaSourceCallers.add(caller);
+      prepareSourceInternal(mediaTransferListener);
     } else if (timeline != null) {
-      listener.onSourceInfoRefreshed(/* source= */ this, timeline, manifest);
+      enable(caller);
+      caller.onSourceInfoRefreshed(/* source= */ this, timeline);
     }
   }
 
   @Override
-  public final void releaseSource(SourceInfoRefreshListener listener) {
-    sourceInfoListeners.remove(listener);
-    if (sourceInfoListeners.isEmpty()) {
-      player = null;
+  public final void enable(MediaSourceCaller caller) {
+    Assertions.checkNotNull(looper);
+    boolean wasDisabled = enabledMediaSourceCallers.isEmpty();
+    enabledMediaSourceCallers.add(caller);
+    if (wasDisabled) {
+      enableInternal();
+    }
+  }
+
+  @Override
+  public final void disable(MediaSourceCaller caller) {
+    boolean wasEnabled = !enabledMediaSourceCallers.isEmpty();
+    enabledMediaSourceCallers.remove(caller);
+    if (wasEnabled && enabledMediaSourceCallers.isEmpty()) {
+      disableInternal();
+    }
+  }
+
+  @Override
+  public final void releaseSource(MediaSourceCaller caller) {
+    mediaSourceCallers.remove(caller);
+    if (mediaSourceCallers.isEmpty()) {
+      looper = null;
       timeline = null;
-      manifest = null;
+      playerId = null;
+      enabledMediaSourceCallers.clear();
       releaseSourceInternal();
+    } else {
+      disable(caller);
     }
   }
 }
