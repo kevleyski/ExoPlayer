@@ -46,7 +46,13 @@ import com.google.errorprone.annotations.CanIgnoreReturnValue;
  * used to extract samples from the input stream.
  *
  * <p>Note that the built-in extractor for FLV streams does not support seeking.
+ *
+ * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
+ *     contains the same ExoPlayer code). See <a
+ *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
+ *     migration guide</a> for more details, including a script to help with the migration.
  */
+@Deprecated
 public final class ProgressiveMediaSource extends BaseMediaSource
     implements ProgressiveMediaPeriod.Listener {
 
@@ -60,8 +66,6 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     private DrmSessionManagerProvider drmSessionManagerProvider;
     private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
     private int continueLoadingCheckIntervalBytes;
-    @Nullable private String customCacheKey;
-    @Nullable private Object tag;
 
     /**
      * Creates a new factory for {@link ProgressiveMediaSource}s.
@@ -205,16 +209,6 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     @Override
     public ProgressiveMediaSource createMediaSource(MediaItem mediaItem) {
       checkNotNull(mediaItem.localConfiguration);
-      boolean needsTag = mediaItem.localConfiguration.tag == null && tag != null;
-      boolean needsCustomCacheKey =
-          mediaItem.localConfiguration.customCacheKey == null && customCacheKey != null;
-      if (needsTag && needsCustomCacheKey) {
-        mediaItem = mediaItem.buildUpon().setTag(tag).setCustomCacheKey(customCacheKey).build();
-      } else if (needsTag) {
-        mediaItem = mediaItem.buildUpon().setTag(tag).build();
-      } else if (needsCustomCacheKey) {
-        mediaItem = mediaItem.buildUpon().setCustomCacheKey(customCacheKey).build();
-      }
       return new ProgressiveMediaSource(
           mediaItem,
           dataSourceFactory,
@@ -276,9 +270,9 @@ public final class ProgressiveMediaSource extends BaseMediaSource
   @Override
   protected void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
     transferListener = mediaTransferListener;
-    drmSessionManager.prepare();
     drmSessionManager.setPlayer(
         /* playbackLooper= */ checkNotNull(Looper.myLooper()), getPlayerId());
+    drmSessionManager.prepare();
     notifySourceInfoRefreshed();
   }
 

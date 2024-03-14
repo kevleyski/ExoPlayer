@@ -324,7 +324,7 @@ public final class FakeTimeline extends Timeline {
     AdPlaybackState contentPeriodState = new AdPlaybackState(/* adsId= */ "adsId");
     AdPlaybackState firstAdPeriodState =
         contentPeriodState
-            .withNewAdGroup(/* adGroupIndex= */ 0, /* adGroupTimesUs */ 0)
+            .withNewAdGroup(/* adGroupIndex= */ 0, /* adGroupTimeUs= */ 0)
             .withAdCount(/* adGroupIndex= */ 0, 1)
             .withAdDurationsUs(
                 /* adGroupIndex= */ 0, DEFAULT_WINDOW_OFFSET_IN_FIRST_PERIOD_US + periodDurationUs)
@@ -391,6 +391,7 @@ public final class FakeTimeline extends Timeline {
   /**
    * Creates a fake timeline with the given window definitions.
    *
+   * @param manifests The manifests of the windows.
    * @param windowDefinitions A list of {@link TimelineWindowDefinition}s.
    */
   public FakeTimeline(Object[] manifests, TimelineWindowDefinition... windowDefinitions) {
@@ -401,6 +402,8 @@ public final class FakeTimeline extends Timeline {
    * Creates a fake timeline with the given window definitions and {@link
    * com.google.android.exoplayer2.source.ShuffleOrder}.
    *
+   * @param manifests The manifests of the windows.
+   * @param shuffleOrder A shuffle ordering for the windows.
    * @param windowDefinitions A list of {@link TimelineWindowDefinition}s.
    */
   public FakeTimeline(

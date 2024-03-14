@@ -25,6 +25,7 @@ import android.widget.Toast;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.fragment.app.FragmentManager;
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.RenderersFactory;
@@ -50,9 +51,18 @@ import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArraySet;
 
-/** Tracks media that has been downloaded. */
+/**
+ * Tracks media that has been downloaded.
+ *
+ * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
+ *     contains the same ExoPlayer code). See <a
+ *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
+ *     migration guide</a> for more details, including a script to help with the migration.
+ */
+@Deprecated
 public class DownloadTracker {
 
   /** Listens for changes in the tracked downloads. */
@@ -200,7 +210,7 @@ public class DownloadTracker {
         return;
       }
       // TODO(internal b/163107948): Support cases where DrmInitData are not in the manifest.
-      if (!hasSchemaData(format.drmInitData)) {
+      if (!hasNonNullWidevineSchemaData(format.drmInitData)) {
         Toast.makeText(context, R.string.download_start_error_offline_license, Toast.LENGTH_LONG)
             .show();
         Log.e(
@@ -321,12 +331,14 @@ public class DownloadTracker {
     }
 
     /**
-     * Returns whether any the {@link DrmInitData.SchemeData} contained in {@code drmInitData} has
-     * non-null {@link DrmInitData.SchemeData#data}.
+     * Returns whether any {@link DrmInitData.SchemeData} that {@linkplain
+     * DrmInitData.SchemeData#matches(UUID) matches} {@link C#WIDEVINE_UUID} has non-null {@link
+     * DrmInitData.SchemeData#data}.
      */
-    private boolean hasSchemaData(DrmInitData drmInitData) {
+    private boolean hasNonNullWidevineSchemaData(DrmInitData drmInitData) {
       for (int i = 0; i < drmInitData.schemeDataCount; i++) {
-        if (drmInitData.get(i).hasData()) {
+        DrmInitData.SchemeData schemeData = drmInitData.get(i);
+        if (schemeData.matches(C.WIDEVINE_UUID) && schemeData.hasData()) {
           return true;
         }
       }
