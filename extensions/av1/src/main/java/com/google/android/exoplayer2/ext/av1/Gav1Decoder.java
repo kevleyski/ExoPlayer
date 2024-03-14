@@ -28,16 +28,8 @@ import com.google.android.exoplayer2.decoder.VideoDecoderOutputBuffer;
 import com.google.android.exoplayer2.util.Util;
 import java.nio.ByteBuffer;
 
-/**
- * Gav1 decoder.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
+/** Gav1 decoder. */
 @VisibleForTesting(otherwise = PACKAGE_PRIVATE)
-@Deprecated
 public final class Gav1Decoder
     extends SimpleDecoder<DecoderInputBuffer, VideoDecoderOutputBuffer, Gav1DecoderException> {
 

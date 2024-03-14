@@ -24,15 +24,7 @@ import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.util.Util;
 import com.google.common.base.Objects;
 
-/**
- * A rating expressed as a fractional number of stars.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** A rating expressed as a fractional number of stars. */
 public final class StarRating extends Rating {
 
   @IntRange(from = 1)

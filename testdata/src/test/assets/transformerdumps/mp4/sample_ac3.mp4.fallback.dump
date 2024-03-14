@@ -1,11 +1,8 @@
 format 0:
-  averageBitrate = 131072
   sampleMimeType = audio/mp4a-latm
   channelCount = 6
   sampleRate = 48000
   pcmEncoding = 2
-  metadata = entries=[Creation time: 1581574441000]
-container metadata = entries=[Creation time: 1581574441000]
 sample:
   trackIndex = 0
   dataHashCode = 1896404418
@@ -17,13 +14,13 @@ sample:
   dataHashCode = -2134951116
   size = 1536
   isKeyFrame = true
-  presentationTimeUs = 2666
+  presentationTimeUs = 2667
 sample:
   trackIndex = 0
   dataHashCode = 97556101
   size = 1536
   isKeyFrame = true
-  presentationTimeUs = 5333
+  presentationTimeUs = 5334
 sample:
   trackIndex = 0
   dataHashCode = -1448980924
@@ -35,13 +32,13 @@ sample:
   dataHashCode = 1871012467
   size = 1536
   isKeyFrame = true
-  presentationTimeUs = 10666
+  presentationTimeUs = 10667
 sample:
   trackIndex = 0
   dataHashCode = -1317831364
   size = 1536
   isKeyFrame = true
-  presentationTimeUs = 13333
+  presentationTimeUs = 13334
 sample:
   trackIndex = 0
   dataHashCode = -1728189539
@@ -53,11 +50,11 @@ sample:
   dataHashCode = -1715881661
   size = 1536
   isKeyFrame = true
-  presentationTimeUs = 18666
+  presentationTimeUs = 18667
 sample:
   trackIndex = 0
   dataHashCode = -1428554542
   size = 1536
   isKeyFrame = true
-  presentationTimeUs = 21333
+  presentationTimeUs = 21334
 released = true

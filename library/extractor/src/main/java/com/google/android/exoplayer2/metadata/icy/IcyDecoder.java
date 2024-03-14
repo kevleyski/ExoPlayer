@@ -27,15 +27,7 @@ import java.nio.charset.CharsetDecoder;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Decodes ICY stream information.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Decodes ICY stream information. */
 public final class IcyDecoder extends SimpleMetadataDecoder {
 
   private static final Pattern METADATA_ELEMENT = Pattern.compile("(.+?)='(.*?)';", Pattern.DOTALL);

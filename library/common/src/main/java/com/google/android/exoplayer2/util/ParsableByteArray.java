@@ -27,13 +27,7 @@ import java.util.Arrays;
 /**
  * Wraps a byte array, providing a set of methods for parsing data from it. Numerical values are
  * parsed with the assumption that their constituent bytes are in big endian order.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 public final class ParsableByteArray {
 
   private static final char[] CR_AND_LF = {'\r', '\n'};
@@ -238,26 +232,9 @@ public final class ParsableByteArray {
     return (data[position] & 0xFF);
   }
 
-  /**
-   * Peeks at the next char.
-   *
-   * <p>Equivalent to passing {@link Charsets#UTF_16} or {@link Charsets#UTF_16BE} to {@link
-   * #peekChar(Charset)}.
-   */
+  /** Peeks at the next char. */
   public char peekChar() {
     return (char) ((data[position] & 0xFF) << 8 | (data[position + 1] & 0xFF));
-  }
-
-  /**
-   * Peeks at the next char (as decoded by {@code charset})
-   *
-   * @throws IllegalArgumentException if charset is not supported. Only US_ASCII, UTF-8, UTF-16,
-   *     UTF-16BE, and UTF-16LE are supported.
-   */
-  public char peekChar(Charset charset) {
-    Assertions.checkArgument(
-        SUPPORTED_CHARSETS_FOR_READLINE.contains(charset), "Unsupported charset: " + charset);
-    return (char) (peekCharacterAndSize(charset) >> Short.SIZE);
   }
 
   /** Reads the next byte as an unsigned value. */
@@ -671,42 +648,27 @@ public final class ParsableByteArray {
    * UTF-8 and two bytes for UTF-16).
    */
   private char readCharacterIfInList(Charset charset, char[] chars) {
-    int characterAndSize = peekCharacterAndSize(charset);
-
-    if (characterAndSize != 0 && Chars.contains(chars, (char) (characterAndSize >> Short.SIZE))) {
-      position += characterAndSize & 0xFFFF;
-      return (char) (characterAndSize >> Short.SIZE);
-    } else {
-      return 0;
-    }
-  }
-
-  /**
-   * Peeks at the character at {@link #position} (as decoded by {@code charset}), returns it and the
-   * number of bytes the character takes up within the array packed into an int. First four bytes
-   * are the character and the second four is the size in bytes it takes. Returns 0 if {@link
-   * #bytesLeft()} doesn't allow reading a whole character in {@code charset} or if the {@code
-   * charset} is not one of US_ASCII, UTF-8, UTF-16, UTF-16BE, or UTF-16LE.
-   *
-   * <p>Only supports characters that occupy a single code unit (i.e. one byte for UTF-8 and two
-   * bytes for UTF-16).
-   */
-  private int peekCharacterAndSize(Charset charset) {
-    byte character;
-    short characterSize;
+    char character;
+    int characterSize;
     if ((charset.equals(Charsets.UTF_8) || charset.equals(Charsets.US_ASCII)) && bytesLeft() >= 1) {
-      character = (byte) Chars.checkedCast(UnsignedBytes.toInt(data[position]));
+      character = Chars.checkedCast(UnsignedBytes.toInt(data[position]));
       characterSize = 1;
     } else if ((charset.equals(Charsets.UTF_16) || charset.equals(Charsets.UTF_16BE))
         && bytesLeft() >= 2) {
-      character = (byte) Chars.fromBytes(data[position], data[position + 1]);
+      character = Chars.fromBytes(data[position], data[position + 1]);
       characterSize = 2;
     } else if (charset.equals(Charsets.UTF_16LE) && bytesLeft() >= 2) {
-      character = (byte) Chars.fromBytes(data[position + 1], data[position]);
+      character = Chars.fromBytes(data[position + 1], data[position]);
       characterSize = 2;
     } else {
       return 0;
     }
-    return (Chars.checkedCast(character) << Short.SIZE) + characterSize;
+
+    if (Chars.contains(chars, character)) {
+      position += characterSize;
+      return Chars.checkedCast(character);
+    } else {
+      return 0;
+    }
   }
 }

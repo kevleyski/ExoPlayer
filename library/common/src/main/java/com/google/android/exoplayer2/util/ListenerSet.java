@@ -40,12 +40,7 @@ import org.checkerframework.checker.nullness.qual.NonNull;
  * otherwise.
  *
  * @param <T> The listener type.
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 public final class ListenerSet<T extends @NonNull Object> {
 
   /**
@@ -102,20 +97,14 @@ public final class ListenerSet<T extends @NonNull Object> {
    *     during one {@link Looper} message queue iteration were handled by the listeners.
    */
   public ListenerSet(Looper looper, Clock clock, IterationFinishedEvent<T> iterationFinishedEvent) {
-    this(
-        /* listeners= */ new CopyOnWriteArraySet<>(),
-        looper,
-        clock,
-        iterationFinishedEvent,
-        /* throwsWhenUsingWrongThread= */ true);
+    this(/* listeners= */ new CopyOnWriteArraySet<>(), looper, clock, iterationFinishedEvent);
   }
 
   private ListenerSet(
       CopyOnWriteArraySet<ListenerHolder<T>> listeners,
       Looper looper,
       Clock clock,
-      IterationFinishedEvent<T> iterationFinishedEvent,
-      boolean throwsWhenUsingWrongThread) {
+      IterationFinishedEvent<T> iterationFinishedEvent) {
     this.clock = clock;
     this.listeners = listeners;
     this.iterationFinishedEvent = iterationFinishedEvent;
@@ -126,7 +115,7 @@ public final class ListenerSet<T extends @NonNull Object> {
     @SuppressWarnings("nullness:methodref.receiver.bound")
     HandlerWrapper handler = clock.createHandler(looper, this::handleMessage);
     this.handler = handler;
-    this.throwsWhenUsingWrongThread = throwsWhenUsingWrongThread;
+    throwsWhenUsingWrongThread = true;
   }
 
   /**
@@ -158,8 +147,7 @@ public final class ListenerSet<T extends @NonNull Object> {
   @CheckResult
   public ListenerSet<T> copy(
       Looper looper, Clock clock, IterationFinishedEvent<T> iterationFinishedEvent) {
-    return new ListenerSet<>(
-        listeners, looper, clock, iterationFinishedEvent, throwsWhenUsingWrongThread);
+    return new ListenerSet<>(listeners, looper, clock, iterationFinishedEvent);
   }
 
   /**

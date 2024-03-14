@@ -35,15 +35,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/**
- * Represents the video encoder settings.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Represents the video encoder settings. */
 public final class VideoEncoderSettings {
 
   /** A value for various fields to indicate that the field's value is unknown or not applicable. */
@@ -108,9 +100,9 @@ public final class VideoEncoderSettings {
     /**
      * Sets {@link VideoEncoderSettings#bitrate}. The default value is {@link #NO_VALUE}.
      *
-     * <p>Can not be set if enabling {@link #experimentalSetEnableHighQualityTargeting(boolean)}.
+     * <p>Can not be set if enabling {@link #setEnableHighQualityTargeting(boolean)}.
      *
-     * @param bitrate The {@link VideoEncoderSettings#bitrate} in bits per second.
+     * @param bitrate The {@link VideoEncoderSettings#bitrate}.
      * @return This builder.
      */
     @CanIgnoreReturnValue
@@ -173,8 +165,7 @@ public final class VideoEncoderSettings {
      * Sets encoding operating rate and priority. The default values are {@link #NO_VALUE}, which is
      * treated as configuring the encoder for maximum throughput.
      *
-     * @param operatingRate The {@link MediaFormat#KEY_OPERATING_RATE operating rate} in frames per
-     *     second.
+     * @param operatingRate The {@link MediaFormat#KEY_OPERATING_RATE operating rate}.
      * @param priority The {@link MediaFormat#KEY_PRIORITY priority}.
      * @return This builder.
      */
@@ -189,8 +180,6 @@ public final class VideoEncoderSettings {
     /**
      * Sets whether to enable automatic adjustment of the bitrate to target a high quality encoding.
      *
-     * <p>This method is experimental and may be removed or changed without warning.
-     *
      * <p>Default value is {@code false}.
      *
      * <p>Requires {@link android.media.MediaCodecInfo.EncoderCapabilities#BITRATE_MODE_VBR}.
@@ -198,7 +187,7 @@ public final class VideoEncoderSettings {
      * <p>Can not be enabled alongside setting a custom bitrate with {@link #setBitrate(int)}.
      */
     @CanIgnoreReturnValue
-    public Builder experimentalSetEnableHighQualityTargeting(boolean enableHighQualityTargeting) {
+    public Builder setEnableHighQualityTargeting(boolean enableHighQualityTargeting) {
       this.enableHighQualityTargeting = enableHighQualityTargeting;
       return this;
     }
@@ -223,7 +212,7 @@ public final class VideoEncoderSettings {
     }
   }
 
-  /** The encoding bitrate in bits per second. */
+  /** The encoding bitrate. */
   public final int bitrate;
   /** One of {@linkplain BitrateMode}. */
   public final @BitrateMode int bitrateMode;
@@ -233,7 +222,7 @@ public final class VideoEncoderSettings {
   public final int level;
   /** The encoding I-Frame interval in seconds. */
   public final float iFrameIntervalSeconds;
-  /** The encoder {@link MediaFormat#KEY_OPERATING_RATE operating rate} in frames per second. */
+  /** The encoder {@link MediaFormat#KEY_OPERATING_RATE operating rate}. */
   public final int operatingRate;
   /** The encoder {@link MediaFormat#KEY_PRIORITY priority}. */
   public final int priority;

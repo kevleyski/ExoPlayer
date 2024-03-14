@@ -62,15 +62,7 @@ import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlPullParserFactory;
 import org.xmlpull.v1.XmlSerializer;
 
-/**
- * A parser of media presentation description files.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** A parser of media presentation description files. */
 public class DashManifestParser extends DefaultHandler
     implements ParsingLoadable.Parser<DashManifest> {
 
@@ -399,7 +391,7 @@ public class DashManifestParser extends DefaultHandler
       long timeShiftBufferDepthMs,
       boolean dvbProfileDeclared)
       throws XmlPullParserException, IOException {
-    long id = parseLong(xpp, "id", AdaptationSet.ID_UNSET);
+    int id = parseInt(xpp, "id", AdaptationSet.ID_UNSET);
     @C.TrackType int contentType = parseContentType(xpp);
 
     String mimeType = xpp.getAttributeValue(null, "mimeType");
@@ -538,7 +530,7 @@ public class DashManifestParser extends DefaultHandler
   }
 
   protected AdaptationSet buildAdaptationSet(
-      long id,
+      int id,
       @C.TrackType int contentType,
       List<Representation> representations,
       List<Descriptor> accessibilityDescriptors,

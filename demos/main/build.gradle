@@ -14,7 +14,6 @@
 
 apply from: '../../constants.gradle'
 apply plugin: 'com.android.application'
-apply plugin: 'kotlin-android'
 
 android {
     compileSdkVersion project.ext.compileSdkVersion
@@ -36,7 +35,6 @@ android {
 
     buildTypes {
         release {
-            jniDebuggable = true
             shrinkResources true
             minifyEnabled true
             proguardFiles = [

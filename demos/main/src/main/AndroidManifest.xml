@@ -38,7 +38,6 @@
       android:requestLegacyExternalStorage="true"
       android:supportsRtl="true"
       android:name="androidx.multidex.MultiDexApplication"
-      android:networkSecurityConfig="@xml/network_security_config"
       tools:targetApi="29">
 
     <activity android:name=".SampleChooserActivity"
@@ -53,7 +52,6 @@
       </intent-filter>
       <intent-filter>
         <action android:name="android.intent.action.VIEW"/>
-        <action android:name="com.google.android.exoplayer.demo.action.BROWSE"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="http"/>

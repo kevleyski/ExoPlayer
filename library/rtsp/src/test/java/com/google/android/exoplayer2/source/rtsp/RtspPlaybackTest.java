@@ -442,11 +442,6 @@ public final class RtspPlaybackTest {
     }
 
     @Override
-    public boolean needsClosingOnLoadCompletion() {
-      return false;
-    }
-
-    @Override
     public RtspMessageChannel.InterleavedBinaryDataListener getInterleavedBinaryDataListener() {
       return null;
     }
@@ -458,11 +453,6 @@ public final class RtspPlaybackTest {
     public String getTransport() {
       return Util.formatInvariant(
           "RTP/AVP/TCP;unicast;interleaved=%d-%d", LOCAL_PORT + 2, LOCAL_PORT + 3);
-    }
-
-    @Override
-    public boolean needsClosingOnLoadCompletion() {
-      return false;
     }
   }
 

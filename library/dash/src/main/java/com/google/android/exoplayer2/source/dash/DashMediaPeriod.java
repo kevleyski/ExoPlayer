@@ -20,6 +20,7 @@ import static java.lang.annotation.ElementType.TYPE_USE;
 
 import android.util.Pair;
 import android.util.SparseArray;
+import android.util.SparseIntArray;
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
@@ -50,13 +51,11 @@ import com.google.android.exoplayer2.source.dash.manifest.Period;
 import com.google.android.exoplayer2.source.dash.manifest.Representation;
 import com.google.android.exoplayer2.trackselection.ExoTrackSelection;
 import com.google.android.exoplayer2.upstream.Allocator;
-import com.google.android.exoplayer2.upstream.CmcdConfiguration;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.upstream.LoaderErrorThrower;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
-import com.google.common.collect.Maps;
 import com.google.common.primitives.Ints;
 import java.io.IOException;
 import java.lang.annotation.Documented;
@@ -65,22 +64,13 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 
-/**
- * A DASH {@link MediaPeriod}.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** A DASH {@link MediaPeriod}. */
 /* package */ final class DashMediaPeriod
     implements MediaPeriod,
         SequenceableLoader.Callback<ChunkSampleStream<DashChunkSource>>,
@@ -95,7 +85,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   /* package */ final int id;
   private final DashChunkSource.Factory chunkSourceFactory;
   @Nullable private final TransferListener transferListener;
-  @Nullable private final CmcdConfiguration cmcdConfiguration;
   private final DrmSessionManager drmSessionManager;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final BaseUrlExclusionList baseUrlExclusionList;
@@ -127,7 +116,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
       int periodIndex,
       DashChunkSource.Factory chunkSourceFactory,
       @Nullable TransferListener transferListener,
-      @Nullable CmcdConfiguration cmcdConfiguration,
       DrmSessionManager drmSessionManager,
       DrmSessionEventListener.EventDispatcher drmEventDispatcher,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
@@ -144,7 +132,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     this.periodIndex = periodIndex;
     this.chunkSourceFactory = chunkSourceFactory;
     this.transferListener = transferListener;
-    this.cmcdConfiguration = cmcdConfiguration;
     this.drmSessionManager = drmSessionManager;
     this.drmEventDispatcher = drmEventDispatcher;
     this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
@@ -559,8 +546,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
    */
   private static int[][] getGroupedAdaptationSetIndices(List<AdaptationSet> adaptationSets) {
     int adaptationSetCount = adaptationSets.size();
-    HashMap<Long, Integer> adaptationSetIdToIndex =
-        Maps.newHashMapWithExpectedSize(adaptationSetCount);
+    SparseIntArray adaptationSetIdToIndex = new SparseIntArray(adaptationSetCount);
     List<List<Integer>> adaptationSetGroupedIndices = new ArrayList<>(adaptationSetCount);
     SparseArray<List<Integer>> adaptationSetIndexToGroupedIndices =
         new SparseArray<>(adaptationSetCount);
@@ -588,9 +574,10 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
         trickPlayProperty = findTrickPlayProperty(adaptationSet.supplementalProperties);
       }
       if (trickPlayProperty != null) {
-        long mainAdaptationSetId = Long.parseLong(trickPlayProperty.value);
-        @Nullable Integer mainAdaptationSetIndex = adaptationSetIdToIndex.get(mainAdaptationSetId);
-        if (mainAdaptationSetIndex != null) {
+        int mainAdaptationSetId = Integer.parseInt(trickPlayProperty.value);
+        int mainAdaptationSetIndex =
+            adaptationSetIdToIndex.get(mainAdaptationSetId, /* valueIfKeyNotFound= */ -1);
+        if (mainAdaptationSetIndex != -1) {
           mergedGroupIndex = mainAdaptationSetIndex;
         }
       }
@@ -604,11 +591,11 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
         if (adaptationSetSwitchingProperty != null) {
           String[] otherAdaptationSetIds = Util.split(adaptationSetSwitchingProperty.value, ",");
           for (String adaptationSetId : otherAdaptationSetIds) {
-            @Nullable
-            Integer otherAdaptationSetIndex =
-                adaptationSetIdToIndex.get(Long.parseLong(adaptationSetId));
-            if (otherAdaptationSetIndex != null) {
-              mergedGroupIndex = min(mergedGroupIndex, otherAdaptationSetIndex);
+            int otherAdaptationSetId =
+                adaptationSetIdToIndex.get(
+                    Integer.parseInt(adaptationSetId), /* valueIfKeyNotFound= */ -1);
+            if (otherAdaptationSetId != -1) {
+              mergedGroupIndex = min(mergedGroupIndex, otherAdaptationSetId);
             }
           }
         }
@@ -692,7 +679,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
       AdaptationSet firstAdaptationSet = adaptationSets.get(adaptationSetIndices[0]);
       String trackGroupId =
           firstAdaptationSet.id != AdaptationSet.ID_UNSET
-              ? Long.toString(firstAdaptationSet.id)
+              ? Integer.toString(firstAdaptationSet.id)
               : ("unset:" + i);
       int primaryTrackGroupIndex = trackGroupCount++;
       int eventMessageTrackGroupIndex =
@@ -804,8 +791,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
             embeddedClosedCaptionTrackFormats,
             trackPlayerEmsgHandler,
             transferListener,
-            playerId,
-            cmcdConfiguration);
+            playerId);
     ChunkSampleStream<DashChunkSource> stream =
         new ChunkSampleStream<>(
             trackGroupInfo.trackType,

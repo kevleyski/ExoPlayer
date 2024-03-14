@@ -83,7 +83,6 @@ public class MediaCodecAudioRendererTest {
 
   @Mock private AudioSink audioSink;
   @Mock private AudioRendererEventListener audioRendererEventListener;
-  @Mock private RendererCapabilities.Listener rendererCapabilitiesListener;
 
   @Before
   public void setUp() throws Exception {
@@ -325,21 +324,6 @@ public class MediaCodecAudioRendererTest {
 
     shadowOf(Looper.getMainLooper()).idle();
     verify(audioRendererEventListener).onAudioSinkError(error);
-  }
-
-  @Test
-  public void
-      renderer_callsRendererCapabilitiesListener_whenAudioSinkListenerOnAudioCapabilitiesChangedIsCalled() {
-    final ArgumentCaptor<AudioSink.Listener> listenerCaptor =
-        ArgumentCaptor.forClass(AudioSink.Listener.class);
-    verify(audioSink, atLeastOnce()).setListener(listenerCaptor.capture());
-    AudioSink.Listener audioSinkListener = listenerCaptor.getValue();
-    mediaCodecAudioRenderer.getCapabilities().setListener(rendererCapabilitiesListener);
-
-    audioSinkListener.onAudioCapabilitiesChanged();
-
-    shadowOf(Looper.getMainLooper()).idle();
-    verify(rendererCapabilitiesListener).onRendererCapabilitiesChanged(mediaCodecAudioRenderer);
   }
 
   @Test

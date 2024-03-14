@@ -245,7 +245,10 @@ public final class MergingMediaPeriodTest {
           new FakeMediaPeriodWithSelectionParameters(
               new TrackGroupArray(trackGroups),
               new EventDispatcher()
-                  .withParameters(/* windowIndex= */ i, new MediaPeriodId(/* periodUid= */ i)),
+                  .withParameters(
+                      /* windowIndex= */ i,
+                      new MediaPeriodId(/* periodUid= */ i),
+                      /* mediaTimeOffsetMs= */ 0),
               /* trackDataFactory= */ (unusedFormat, unusedMediaPeriodId) ->
                   ImmutableList.of(
                       oneByteSample(definition.singleSampleTimeUs, C.BUFFER_FLAG_KEY_FRAME),

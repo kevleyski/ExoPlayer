@@ -19,19 +19,10 @@ package com.google.android.exoplayer2.effect;
 import static com.google.android.exoplayer2.util.Assertions.checkArgument;
 
 import android.content.Context;
-import androidx.annotation.FloatRange;
-import com.google.android.exoplayer2.util.VideoFrameProcessingException;
+import com.google.android.exoplayer2.util.FrameProcessingException;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 
-/**
- * Adjusts the HSL (Hue, Saturation, and Lightness) of a frame.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Adjusts the HSL (Hue, Saturation, and Lightness) of a frame. */
 public class HslAdjustment implements GlEffect {
 
   /** A builder for {@code HslAdjustment} instances. */
@@ -70,7 +61,7 @@ public class HslAdjustment implements GlEffect {
      *     {@code 0}, which means no change is applied.
      */
     @CanIgnoreReturnValue
-    public Builder adjustSaturation(@FloatRange(from = -100, to = 100) float saturationAdjustment) {
+    public Builder adjustSaturation(float saturationAdjustment) {
       checkArgument(
           -100 <= saturationAdjustment && saturationAdjustment <= 100,
           "Can adjust the saturation by only 100 in either direction, but provided "
@@ -90,7 +81,7 @@ public class HslAdjustment implements GlEffect {
      *     {@code 0}, which means no change is applied.
      */
     @CanIgnoreReturnValue
-    public Builder adjustLightness(@FloatRange(from = -100, to = 100) float lightnessAdjustment) {
+    public Builder adjustLightness(float lightnessAdjustment) {
       checkArgument(
           -100 <= lightnessAdjustment && lightnessAdjustment <= 100,
           "Can adjust the lightness by only 100 in either direction, but provided "
@@ -120,13 +111,8 @@ public class HslAdjustment implements GlEffect {
   }
 
   @Override
-  public SingleFrameGlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
-      throws VideoFrameProcessingException {
-    return new HslShaderProgram(context, /* hslAdjustment= */ this, useHdr);
-  }
-
-  @Override
-  public boolean isNoOp(int inputWidth, int inputHeight) {
-    return hueAdjustmentDegrees == 0f && saturationAdjustment == 0f && lightnessAdjustment == 0f;
+  public SingleFrameGlTextureProcessor toGlTextureProcessor(Context context, boolean useHdr)
+      throws FrameProcessingException {
+    return new HslProcessor(context, /* hslAdjustment= */ this, useHdr);
   }
 }

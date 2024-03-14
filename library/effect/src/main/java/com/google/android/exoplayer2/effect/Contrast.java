@@ -18,23 +18,14 @@ package com.google.android.exoplayer2.effect;
 
 import static com.google.android.exoplayer2.util.Assertions.checkArgument;
 
-import androidx.annotation.FloatRange;
+import android.content.Context;
+import com.google.android.exoplayer2.util.FrameProcessingException;
 
-/**
- * A {@link RgbMatrix} to control the contrast of video frames.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
-public class Contrast implements RgbMatrix {
+/** A {@link GlEffect} to control the contrast of video frames. */
+public class Contrast implements GlEffect {
 
   /** Adjusts the contrast of video frames in the interval [-1, 1]. */
-  private final float contrast;
-
-  private final float[] contrastMatrix;
+  public final float contrast;
 
   /**
    * Creates a new instance for the given contrast value.
@@ -42,40 +33,14 @@ public class Contrast implements RgbMatrix {
    * <p>Contrast values range from -1 (all gray pixels) to 1 (maximum difference of colors). 0 means
    * to add no contrast and leaves the frames unchanged.
    */
-  public Contrast(@FloatRange(from = -1, to = 1) float contrast) {
+  public Contrast(float contrast) {
     checkArgument(-1 <= contrast && contrast <= 1, "Contrast needs to be in the interval [-1, 1].");
     this.contrast = contrast;
-    float contrastFactor = (1 + contrast) / (1.0001f - contrast);
-    contrastMatrix =
-        new float[] {
-          contrastFactor,
-          0.0f,
-          0.0f,
-          0.0f,
-          0.0f,
-          contrastFactor,
-          0.0f,
-          0.0f,
-          0.0f,
-          0.0f,
-          contrastFactor,
-          0.0f,
-          (1.0f - contrastFactor) * 0.5f,
-          (1.0f - contrastFactor) * 0.5f,
-          (1.0f - contrastFactor) * 0.5f,
-          1.0f
-        };
   }
 
   @Override
-  public float[] getMatrix(long presentationTimeUs, boolean useHdr) {
-    // Implementation is not currently time-varying, therefore matrix should not be changing between
-    // frames.
-    return contrastMatrix;
-  }
-
-  @Override
-  public boolean isNoOp(int inputWidth, int inputHeight) {
-    return contrast == 0f;
+  public SingleFrameGlTextureProcessor toGlTextureProcessor(Context context, boolean useHdr)
+      throws FrameProcessingException {
+    return new ContrastProcessor(context, this, useHdr);
   }
 }

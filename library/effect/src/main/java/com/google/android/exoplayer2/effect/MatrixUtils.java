@@ -18,19 +18,11 @@ package com.google.android.exoplayer2.effect;
 import static com.google.android.exoplayer2.util.Assertions.checkArgument;
 
 import android.opengl.Matrix;
-import com.google.android.exoplayer2.util.Size;
+import android.util.Pair;
 import com.google.common.collect.ImmutableList;
 import java.util.Arrays;
 
-/**
- * Utility functions for working with matrices, vertices, and polygons.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Utility functions for working with matrices, vertices, and polygons. */
 /* package */ final class MatrixUtils {
   /**
    * Contains the normal vectors of the clipping planes in homogeneous coordinates which
@@ -230,17 +222,16 @@ import java.util.Arrays;
    * Returns the output frame size after applying the given list of {@link GlMatrixTransformation
    * GlMatrixTransformations} to an input frame with the given size.
    */
-  public static Size configureAndGetOutputSize(
+  public static Pair<Integer, Integer> configureAndGetOutputSize(
       int inputWidth,
       int inputHeight,
       ImmutableList<GlMatrixTransformation> matrixTransformations) {
     checkArgument(inputWidth > 0, "inputWidth must be positive");
     checkArgument(inputHeight > 0, "inputHeight must be positive");
 
-    Size outputSize = new Size(inputWidth, inputHeight);
+    Pair<Integer, Integer> outputSize = Pair.create(inputWidth, inputHeight);
     for (int i = 0; i < matrixTransformations.size(); i++) {
-      outputSize =
-          matrixTransformations.get(i).configure(outputSize.getWidth(), outputSize.getHeight());
+      outputSize = matrixTransformations.get(i).configure(outputSize.first, outputSize.second);
     }
 
     return outputSize;

@@ -32,12 +32,7 @@ import java.util.HashMap;
  * Composite {@link MediaSource} consisting of multiple child sources.
  *
  * @param <T> The type of the id used to identify prepared child sources.
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 public abstract class CompositeMediaSource<T> extends BaseMediaSource {
 
   private final HashMap<T, MediaSourceAndListener<T>> childSources;
@@ -360,7 +355,8 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
       int windowIndex = getWindowIndexForChildWindowIndex(id, childWindowIndex);
       if (mediaSourceEventDispatcher.windowIndex != windowIndex
           || !Util.areEqual(mediaSourceEventDispatcher.mediaPeriodId, mediaPeriodId)) {
-        mediaSourceEventDispatcher = createEventDispatcher(windowIndex, mediaPeriodId);
+        mediaSourceEventDispatcher =
+            createEventDispatcher(windowIndex, mediaPeriodId, /* mediaTimeOffsetMs= */ 0);
       }
       if (drmEventDispatcher.windowIndex != windowIndex
           || !Util.areEqual(drmEventDispatcher.mediaPeriodId, mediaPeriodId)) {

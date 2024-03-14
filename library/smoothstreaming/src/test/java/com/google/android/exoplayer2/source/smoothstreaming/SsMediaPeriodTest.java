@@ -67,13 +67,12 @@ public class SsMediaPeriodTest {
               mock(SsChunkSource.Factory.class),
               mock(TransferListener.class),
               mock(CompositeSequenceableLoaderFactory.class),
-              /* cmcdConfiguration= */ null,
               mock(DrmSessionManager.class),
               new DrmSessionEventListener.EventDispatcher()
                   .withParameters(/* windowIndex= */ 0, mediaPeriodId),
               mock(LoadErrorHandlingPolicy.class),
               new MediaSourceEventListener.EventDispatcher()
-                  .withParameters(/* windowIndex= */ 0, mediaPeriodId),
+                  .withParameters(/* windowIndex= */ 0, mediaPeriodId, /* mediaTimeOffsetMs= */ 0),
               mock(LoaderErrorThrower.class),
               mock(Allocator.class));
         };

@@ -19,15 +19,7 @@ import android.app.Notification;
 import android.app.Service;
 import android.content.Intent;
 
-/**
- * Schedules a service to be started in the foreground when some {@link Requirements} are met.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Schedules a service to be started in the foreground when some {@link Requirements} are met. */
 public interface Scheduler {
 
   /**

@@ -32,13 +32,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
 /**
  * Wraps a {@link MediaPeriod} and clips its {@link SampleStream}s to provide a subsequence of their
  * samples.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 public final class ClippingMediaPeriod implements MediaPeriod, MediaPeriod.Callback {
 
   /** The {@link MediaPeriod} wrapped by this clipping media period. */
@@ -331,7 +325,6 @@ public final class ClippingMediaPeriod implements MediaPeriod, MediaPeriod.Callb
         buffer.setFlags(C.BUFFER_FLAG_END_OF_STREAM);
         return C.RESULT_BUFFER_READ;
       }
-      long bufferedPositionUs = getBufferedPositionUs();
       @ReadDataResult int result = childStream.readData(formatHolder, buffer, readFlags);
       if (result == C.RESULT_FORMAT_READ) {
         Format format = Assertions.checkNotNull(formatHolder.format);
@@ -351,7 +344,7 @@ public final class ClippingMediaPeriod implements MediaPeriod, MediaPeriod.Callb
       if (endUs != C.TIME_END_OF_SOURCE
           && ((result == C.RESULT_BUFFER_READ && buffer.timeUs >= endUs)
               || (result == C.RESULT_NOTHING_READ
-                  && bufferedPositionUs == C.TIME_END_OF_SOURCE
+                  && getBufferedPositionUs() == C.TIME_END_OF_SOURCE
                   && !buffer.waitingForKeys))) {
         buffer.clear();
         buffer.setFlags(C.BUFFER_FLAG_END_OF_STREAM);

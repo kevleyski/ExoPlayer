@@ -23,6 +23,7 @@ import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.extractor.DefaultExtractorInput;
 import com.google.android.exoplayer2.extractor.Extractor;
+import com.google.android.exoplayer2.extractor.ExtractorInput;
 import com.google.android.exoplayer2.extractor.ExtractorOutput;
 import com.google.android.exoplayer2.extractor.PositionHolder;
 import com.google.android.exoplayer2.upstream.DataSourceUtil;
@@ -49,13 +50,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
  *
  * <p>Received RTP packets' payloads will be extracted by an {@link RtpExtractor}, and will be
  * written to the {@link ExtractorOutput} instance provided at construction.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 /* package */ final class RtpDataLoadable implements Loader.Loadable {
 
   /** Called on loadable events. */
@@ -80,9 +75,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   private final Handler playbackThreadHandler;
   private final RtpDataChannel.Factory rtpDataChannelFactory;
 
-  @Nullable private RtpDataChannel dataChannel;
   private @MonotonicNonNull RtpExtractor extractor;
-  private @MonotonicNonNull DefaultExtractorInput extractorInput;
 
   private volatile boolean loadCancelled;
   private volatile long pendingSeekPositionUs;
@@ -147,49 +140,36 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
   @Override
   public void load() throws IOException {
-    // Allows to resume loading after canceling load.
-    if (loadCancelled) {
-      loadCancelled = false;
-    }
-
+    @Nullable RtpDataChannel dataChannel = null;
     try {
-      if (dataChannel == null) {
-        dataChannel = rtpDataChannelFactory.createAndOpenDataChannel(trackId);
-        String transport = dataChannel.getTransport();
+      dataChannel = rtpDataChannelFactory.createAndOpenDataChannel(trackId);
+      String transport = dataChannel.getTransport();
 
-        RtpDataChannel finalDataChannel = dataChannel;
-        playbackThreadHandler.post(
-            () -> eventListener.onTransportReady(transport, finalDataChannel));
+      RtpDataChannel finalDataChannel = dataChannel;
+      playbackThreadHandler.post(() -> eventListener.onTransportReady(transport, finalDataChannel));
 
-        extractorInput =
-            new DefaultExtractorInput(
-                checkNotNull(dataChannel), /* position= */ 0, /* length= */ C.LENGTH_UNSET);
-        extractor = new RtpExtractor(rtspMediaTrack.payloadFormat, trackId);
-        extractor.init(output);
-      }
+      // Sets up the extractor.
+      ExtractorInput extractorInput =
+          new DefaultExtractorInput(
+              checkNotNull(dataChannel), /* position= */ 0, /* length= */ C.LENGTH_UNSET);
+      extractor = new RtpExtractor(rtspMediaTrack.payloadFormat, trackId);
+      extractor.init(output);
 
       while (!loadCancelled) {
         if (pendingSeekPositionUs != C.TIME_UNSET) {
-          checkNotNull(extractor).seek(nextRtpTimestamp, pendingSeekPositionUs);
+          extractor.seek(nextRtpTimestamp, pendingSeekPositionUs);
           pendingSeekPositionUs = C.TIME_UNSET;
         }
 
         @Extractor.ReadResult
-        int readResult =
-            checkNotNull(extractor)
-                .read(checkNotNull(extractorInput), /* seekPosition= */ new PositionHolder());
+        int readResult = extractor.read(extractorInput, /* seekPosition= */ new PositionHolder());
         if (readResult == Extractor.RESULT_END_OF_INPUT) {
           // Loading is finished.
           break;
         }
       }
-      // Resets the flag if user cancels loading.
-      loadCancelled = false;
     } finally {
-      if (checkNotNull(dataChannel).needsClosingOnLoadCompletion()) {
-        DataSourceUtil.closeQuietly(dataChannel);
-        dataChannel = null;
-      }
+      DataSourceUtil.closeQuietly(dataChannel);
     }
   }
 

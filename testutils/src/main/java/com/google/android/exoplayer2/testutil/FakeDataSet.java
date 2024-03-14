@@ -265,7 +265,7 @@ public class FakeDataSet {
   /** Returns a new {@link FakeData} with the given {@code uri}. */
   public FakeData newData(Uri uri) {
     FakeData data = new FakeData(this, uri);
-    dataMap.put(uri.normalizeScheme(), data);
+    dataMap.put(uri, data);
     return data;
   }
 
@@ -278,7 +278,7 @@ public class FakeDataSet {
   /** Returns the data for the given {@code uri}, or {@code defaultData} if no data is set. */
   @Nullable
   public FakeData getData(Uri uri) {
-    @Nullable FakeData data = dataMap.get(uri.normalizeScheme());
+    @Nullable FakeData data = dataMap.get(uri);
     return data != null ? data : defaultData;
   }
 

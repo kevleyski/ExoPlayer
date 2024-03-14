@@ -40,15 +40,7 @@ import java.lang.annotation.Target;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Represents a line from an SSA/ASS {@code [V4+ Styles]} section.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Represents a line from an SSA/ASS {@code [V4+ Styles]} section. */
 /* package */ final class SsaStyle {
 
   private static final String TAG = "SsaStyle";

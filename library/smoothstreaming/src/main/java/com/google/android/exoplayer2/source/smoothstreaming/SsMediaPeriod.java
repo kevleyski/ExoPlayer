@@ -33,7 +33,6 @@ import com.google.android.exoplayer2.source.chunk.ChunkSampleStream;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest;
 import com.google.android.exoplayer2.trackselection.ExoTrackSelection;
 import com.google.android.exoplayer2.upstream.Allocator;
-import com.google.android.exoplayer2.upstream.CmcdConfiguration;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.upstream.LoaderErrorThrower;
 import com.google.android.exoplayer2.upstream.TransferListener;
@@ -42,15 +41,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 
-/**
- * A SmoothStreaming {@link MediaPeriod}.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** A SmoothStreaming {@link MediaPeriod}. */
 /* package */ final class SsMediaPeriod
     implements MediaPeriod, SequenceableLoader.Callback<ChunkSampleStream<SsChunkSource>> {
 
@@ -58,7 +49,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   @Nullable private final TransferListener transferListener;
   private final LoaderErrorThrower manifestLoaderErrorThrower;
   private final DrmSessionManager drmSessionManager;
-  @Nullable private final CmcdConfiguration cmcdConfiguration;
   private final DrmSessionEventListener.EventDispatcher drmEventDispatcher;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final MediaSourceEventListener.EventDispatcher mediaSourceEventDispatcher;
@@ -76,7 +66,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
       SsChunkSource.Factory chunkSourceFactory,
       @Nullable TransferListener transferListener,
       CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
-      @Nullable CmcdConfiguration cmcdConfiguration,
       DrmSessionManager drmSessionManager,
       DrmSessionEventListener.EventDispatcher drmEventDispatcher,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
@@ -87,7 +76,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     this.chunkSourceFactory = chunkSourceFactory;
     this.transferListener = transferListener;
     this.manifestLoaderErrorThrower = manifestLoaderErrorThrower;
-    this.cmcdConfiguration = cmcdConfiguration;
     this.drmSessionManager = drmSessionManager;
     this.drmEventDispatcher = drmEventDispatcher;
     this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
@@ -249,12 +237,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     int streamElementIndex = trackGroups.indexOf(selection.getTrackGroup());
     SsChunkSource chunkSource =
         chunkSourceFactory.createChunkSource(
-            manifestLoaderErrorThrower,
-            manifest,
-            streamElementIndex,
-            selection,
-            transferListener,
-            cmcdConfiguration);
+            manifestLoaderErrorThrower, manifest, streamElementIndex, selection, transferListener);
     return new ChunkSampleStream<>(
         manifest.streamElements[streamElementIndex].type,
         null,

@@ -27,7 +27,6 @@ import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.net.Uri;
 import android.os.AsyncTask;
-import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.JsonReader;
@@ -72,15 +71,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * An activity for selecting from a list of media samples.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** An activity for selecting from a list of media samples. */
 public class SampleChooserActivity extends AppCompatActivity
     implements DownloadTracker.Listener, OnChildClickListener {
 
@@ -280,7 +271,7 @@ public class SampleChooserActivity extends AppCompatActivity
       Toast.makeText(getApplicationContext(), downloadUnsupportedStringId, Toast.LENGTH_LONG)
           .show();
     } else if (!notificationPermissionToastShown
-        && Build.VERSION.SDK_INT >= 33
+        && Util.SDK_INT >= 33
         && checkSelfPermission(Api33.getPostNotificationPermissionString())
             != PackageManager.PERMISSION_GRANTED) {
       downloadMediaItemWaitingForNotificationPermission = playlistHolder.mediaItems.get(0);

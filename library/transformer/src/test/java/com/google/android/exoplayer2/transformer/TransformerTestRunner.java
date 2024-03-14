@@ -17,11 +17,12 @@
 package com.google.android.exoplayer2.transformer;
 
 import static com.google.android.exoplayer2.robolectric.RobolectricUtil.runLooperUntil;
-import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
 
+import androidx.annotation.Nullable;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.robolectric.RobolectricUtil;
-import java.util.Objects;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 
@@ -31,43 +32,67 @@ public final class TransformerTestRunner {
   private TransformerTestRunner() {}
 
   /**
-   * Runs tasks of the {@linkplain Transformer#getApplicationLooper() transformer Looper} until the
-   * {@linkplain Transformer export} ends.
+   * Runs tasks of the {@link Transformer#getApplicationLooper() transformer Looper} until the
+   * current {@link Transformer transformation} completes.
    *
    * @param transformer The {@link Transformer}.
-   * @return The {@link ExportResult}.
-   * @throws ExportException If the export threw an exception.
    * @throws TimeoutException If the {@link RobolectricUtil#DEFAULT_TIMEOUT_MS default timeout} is
    *     exceeded.
-   * @throws IllegalStateException If the method is not called from the main thread.
+   * @throws IllegalStateException If the method is not called from the main thread, or if the
+   *     transformation completes with error.
    */
-  public static ExportResult runLooper(Transformer transformer)
-      throws ExportException, TimeoutException {
-    AtomicReference<@NullableType ExportResult> exportResultRef = new AtomicReference<>();
+  public static void runUntilCompleted(Transformer transformer) throws TimeoutException {
+    @Nullable Exception exception = runUntilListenerCalled(transformer);
+    if (exception != null) {
+      throw new IllegalStateException(exception);
+    }
+  }
+
+  /**
+   * Runs tasks of the {@link Transformer#getApplicationLooper() transformer Looper} until a {@link
+   * Transformer} error occurs.
+   *
+   * @param transformer The {@link Transformer}.
+   * @return The raised exception.
+   * @throws TimeoutException If the {@link RobolectricUtil#DEFAULT_TIMEOUT_MS default timeout} is
+   *     exceeded.
+   * @throws IllegalStateException If the method is not called from the main thread, or if the
+   *     transformation completes without error.
+   */
+  public static TransformationException runUntilError(Transformer transformer)
+      throws TimeoutException {
+    @Nullable TransformationException exception = runUntilListenerCalled(transformer);
+    if (exception == null) {
+      throw new IllegalStateException("The transformation completed without error.");
+    }
+    return exception;
+  }
+
+  @Nullable
+  private static TransformationException runUntilListenerCalled(Transformer transformer)
+      throws TimeoutException {
+    AtomicBoolean transformationCompleted = new AtomicBoolean();
+    AtomicReference<@NullableType TransformationException> transformationException =
+        new AtomicReference<>();
 
     transformer.addListener(
         new Transformer.Listener() {
           @Override
-          public void onCompleted(Composition composition, ExportResult exportResult) {
-            exportResultRef.set(exportResult);
+          public void onTransformationCompleted(
+              MediaItem inputMediaItem, TransformationResult transformationResult) {
+            transformationCompleted.set(true);
           }
 
           @Override
-          public void onError(
-              Composition composition, ExportResult exportResult, ExportException exportException) {
-            if (!Objects.equals(exportResult.exportException, exportException)) {
-              exportResult = exportResult.buildUpon().setExportException(exportException).build();
-            }
-            exportResultRef.set(exportResult);
+          public void onTransformationError(
+              MediaItem inputMediaItem, TransformationException exception) {
+            transformationException.set(exception);
           }
         });
-    runLooperUntil(transformer.getApplicationLooper(), () -> exportResultRef.get() != null);
+    runLooperUntil(
+        transformer.getApplicationLooper(),
+        () -> transformationCompleted.get() || transformationException.get() != null);
 
-    ExportResult exportResult = checkNotNull(exportResultRef.get());
-    if (exportResult.exportException != null) {
-      throw exportResult.exportException;
-    }
-
-    return exportResult;
+    return transformationException.get();
   }
 }

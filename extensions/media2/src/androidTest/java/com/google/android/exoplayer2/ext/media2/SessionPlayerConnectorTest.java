@@ -165,7 +165,7 @@ public class SessionPlayerConnectorTest {
           new ForwardingPlayer(exoPlayer) {
             @Override
             public boolean isCommandAvailable(int command) {
-              if (command == COMMAND_PLAY_PAUSE || command == COMMAND_PREPARE) {
+              if (command == COMMAND_PLAY_PAUSE) {
                 return false;
               }
               return super.isCommandAvailable(command);
@@ -173,10 +173,7 @@ public class SessionPlayerConnectorTest {
 
             @Override
             public Commands getAvailableCommands() {
-              return super.getAvailableCommands()
-                  .buildUpon()
-                  .removeAll(COMMAND_PLAY_PAUSE, COMMAND_PREPARE)
-                  .build();
+              return super.getAvailableCommands().buildUpon().remove(COMMAND_PLAY_PAUSE).build();
             }
           };
       playerConnector = new SessionPlayerConnector(forwardingPlayer);

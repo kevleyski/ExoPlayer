@@ -30,15 +30,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * Utility methods for parsing Vorbis streams.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Utility methods for parsing Vorbis streams. */
 public final class VorbisUtil {
 
   /** Vorbis comment header. */
@@ -378,7 +370,7 @@ public final class VorbisUtil {
     bitArray.skipBits(headerData.getPosition() * 8);
 
     for (int i = 0; i < numberOfBooks; i++) {
-      skipBook(bitArray);
+      readBook(bitArray);
     }
 
     int timeCount = bitArray.readBits(6) + 1;
@@ -542,7 +534,7 @@ public final class VorbisUtil {
     }
   }
 
-  private static void skipBook(VorbisBitArray bitArray) throws ParserException {
+  private static CodeBook readBook(VorbisBitArray bitArray) throws ParserException {
     if (bitArray.readBits(24) != 0x564342) {
       throw ParserException.createForMalformedContainer(
           "expected code book to start with [0x56, 0x43, 0x42] at " + bitArray.getPosition(),
@@ -550,23 +542,30 @@ public final class VorbisUtil {
     }
     int dimensions = bitArray.readBits(16);
     int entries = bitArray.readBits(24);
+    long[] lengthMap = new long[entries];
 
     boolean isOrdered = bitArray.readBit();
     if (!isOrdered) {
       boolean isSparse = bitArray.readBit();
-      for (int i = 0; i < entries; i++) {
+      for (int i = 0; i < lengthMap.length; i++) {
         if (isSparse) {
           if (bitArray.readBit()) {
-            bitArray.skipBits(5); // lengthMap entry
+            lengthMap[i] = (long) (bitArray.readBits(5) + 1);
+          } else { // entry unused
+            lengthMap[i] = 0;
           }
         } else { // not sparse
-          bitArray.skipBits(5); // lengthMap entry
+          lengthMap[i] = (long) (bitArray.readBits(5) + 1);
         }
       }
     } else {
-      bitArray.skipBits(5); // length
-      for (int i = 0; i < entries; ) {
-        i += bitArray.readBits(iLog(entries - i)); // num
+      int length = bitArray.readBits(5) + 1;
+      for (int i = 0; i < lengthMap.length; ) {
+        int num = bitArray.readBits(iLog(entries - i));
+        for (int j = 0; j < num && i < lengthMap.length; i++, j++) {
+          lengthMap[i] = length;
+        }
+        length++;
       }
     }
 
@@ -592,6 +591,7 @@ public final class VorbisUtil {
       // discard (no decoding required yet)
       bitArray.skipBits((int) (lookupValuesCount * valueBits));
     }
+    return new CodeBook(dimensions, entries, lengthMap, lookupType, isOrdered);
   }
 
   /**
@@ -604,5 +604,23 @@ public final class VorbisUtil {
 
   private VorbisUtil() {
     // Prevent instantiation.
+  }
+
+  private static final class CodeBook {
+
+    public final int dimensions;
+    public final int entries;
+    public final long[] lengthMap;
+    public final int lookupType;
+    public final boolean isOrdered;
+
+    public CodeBook(
+        int dimensions, int entries, long[] lengthMap, int lookupType, boolean isOrdered) {
+      this.dimensions = dimensions;
+      this.entries = entries;
+      this.lengthMap = lengthMap;
+      this.lookupType = lookupType;
+      this.isOrdered = isOrdered;
+    }
   }
 }

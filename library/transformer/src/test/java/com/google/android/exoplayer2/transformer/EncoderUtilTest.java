@@ -16,7 +16,6 @@
 
 package com.google.android.exoplayer2.transformer;
 
-import static com.google.android.exoplayer2.util.MimeTypes.VIDEO_H264;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.media.MediaCodecInfo;
@@ -24,31 +23,23 @@ import android.media.MediaFormat;
 import android.util.Size;
 import androidx.annotation.Nullable;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.video.ColorInfo;
+import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.common.collect.ImmutableList;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.annotation.Config;
 import org.robolectric.shadows.MediaCodecInfoBuilder;
-import org.robolectric.shadows.ShadowMediaCodec;
 import org.robolectric.shadows.ShadowMediaCodecList;
 
-/**
- * Unit test for {@link EncoderUtil}.
- *
- * <p>See {@link
- * com.google.android.exoplayer2.mediacodec.MediaCodecUtil#maxH264DecodableFrameSize()} for
- * information on how MediaCodec determines frame sizes.
- */
+/** Unit test for {@link EncoderUtil}. */
 @RunWith(AndroidJUnit4.class)
 public class EncoderUtilTest {
+  private static final String MIME_TYPE = MimeTypes.VIDEO_H264;
+
   @Before
   public void setUp() {
     MediaFormat avcFormat = new MediaFormat();
-    avcFormat.setString(MediaFormat.KEY_MIME, VIDEO_H264);
+    avcFormat.setString(MediaFormat.KEY_MIME, MediaFormat.MIMETYPE_VIDEO_AVC);
     MediaCodecInfo.CodecProfileLevel profileLevel = new MediaCodecInfo.CodecProfileLevel();
     profileLevel.profile = MediaCodecInfo.CodecProfileLevel.AVCProfileHigh;
     // Using Level4 gives us 8192 16x16 blocks. If using width 1920 uses 120 blocks, 8192 / 120 = 68
@@ -70,22 +61,14 @@ public class EncoderUtilTest {
             .build());
   }
 
-  @After
-  public void tearDown() {
-    ShadowMediaCodecList.reset();
-    ShadowMediaCodec.clearCodecs();
-    EncoderUtil.clearCachedEncoders();
-  }
-
   @Test
   public void getSupportedResolution_withSupportedResolution_succeeds() {
-    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(VIDEO_H264);
+    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(MIME_TYPE);
     MediaCodecInfo encoderInfo = supportedEncoders.get(0);
 
     @Nullable
     Size closestSupportedResolution =
-        EncoderUtil.getSupportedResolution(
-            encoderInfo, VIDEO_H264, /* width= */ 1920, /* height= */ 1080);
+        EncoderUtil.getSupportedResolution(encoderInfo, MIME_TYPE, 1920, 1080);
 
     assertThat(closestSupportedResolution).isNotNull();
     assertThat(closestSupportedResolution.getWidth()).isEqualTo(1920);
@@ -94,13 +77,12 @@ public class EncoderUtilTest {
 
   @Test
   public void getSupportedResolution_withUnalignedSize_findsMostCloselySupportedResolution() {
-    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(VIDEO_H264);
+    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(MIME_TYPE);
     MediaCodecInfo encoderInfo = supportedEncoders.get(0);
 
     @Nullable
     Size closestSupportedResolution =
-        EncoderUtil.getSupportedResolution(
-            encoderInfo, VIDEO_H264, /* width= */ 1919, /* height= */ 1081);
+        EncoderUtil.getSupportedResolution(encoderInfo, MIME_TYPE, 1919, 1081);
 
     assertThat(closestSupportedResolution).isNotNull();
     assertThat(closestSupportedResolution.getWidth()).isEqualTo(1920);
@@ -108,15 +90,13 @@ public class EncoderUtilTest {
   }
 
   @Test
-  public void getSupportedResolution_findsThreeQuartersOfTheOriginalSize() {
-    // The supported resolution will try to match the aspect ratio where possible.
-    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(VIDEO_H264);
+  public void getSupportedResolution_withWidthTooBig_findsTwoThirdsOfTheOriginalSize() {
+    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(MIME_TYPE);
     MediaCodecInfo encoderInfo = supportedEncoders.get(0);
 
     @Nullable
     Size closestSupportedResolution =
-        EncoderUtil.getSupportedResolution(
-            encoderInfo, VIDEO_H264, /* width= */ 1920, /* height= */ 1920);
+        EncoderUtil.getSupportedResolution(encoderInfo, MIME_TYPE, 1920, 1920);
 
     assertThat(closestSupportedResolution).isNotNull();
     assertThat(closestSupportedResolution.getWidth()).isEqualTo(1440);
@@ -124,84 +104,16 @@ public class EncoderUtilTest {
   }
 
   @Test
-  public void getSupportedResolution_findsTwoThirdsOfTheOriginalSize() {
-    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(VIDEO_H264);
+  public void getSupportedResolution_withWidthTooBig2_findsHalfOfTheOriginalSize() {
+    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(MIME_TYPE);
     MediaCodecInfo encoderInfo = supportedEncoders.get(0);
 
     @Nullable
     Size closestSupportedResolution =
-        EncoderUtil.getSupportedResolution(
-            encoderInfo, VIDEO_H264, /* width= */ 2880, /* height= */ 1620);
+        EncoderUtil.getSupportedResolution(encoderInfo, MIME_TYPE, 3840, 2160);
 
     assertThat(closestSupportedResolution).isNotNull();
     assertThat(closestSupportedResolution.getWidth()).isEqualTo(1920);
     assertThat(closestSupportedResolution.getHeight()).isEqualTo(1080);
-  }
-
-  @Test
-  public void getSupportedResolution_findsHalfOfTheOriginalSize() {
-    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(VIDEO_H264);
-    MediaCodecInfo encoderInfo = supportedEncoders.get(0);
-
-    @Nullable
-    Size closestSupportedResolution =
-        EncoderUtil.getSupportedResolution(
-            encoderInfo, VIDEO_H264, /* width= */ 2160, /* height= */ 3840);
-
-    assertThat(closestSupportedResolution).isNotNull();
-    assertThat(closestSupportedResolution.getWidth()).isEqualTo(1080);
-    assertThat(closestSupportedResolution.getHeight()).isEqualTo(1920);
-  }
-
-  @Test
-  public void getSupportedResolution_findsOneQuarterOfTheOriginalSize() {
-    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(VIDEO_H264);
-    MediaCodecInfo encoderInfo = supportedEncoders.get(0);
-
-    @Nullable
-    Size closestSupportedResolution =
-        EncoderUtil.getSupportedResolution(
-            encoderInfo, VIDEO_H264, /* width= */ 7680, /* height= */ 4320);
-
-    assertThat(closestSupportedResolution).isNotNull();
-    assertThat(closestSupportedResolution.getWidth()).isEqualTo(1920);
-    assertThat(closestSupportedResolution.getHeight()).isEqualTo(1080);
-  }
-
-  @Test
-  public void getSupportedResolution_requestedReallyLarge_matchesAspectRatio() {
-    ImmutableList<MediaCodecInfo> supportedEncoders = EncoderUtil.getSupportedEncoders(VIDEO_H264);
-    MediaCodecInfo encoderInfo = supportedEncoders.get(0);
-
-    @Nullable
-    Size closestSupportedResolution =
-        EncoderUtil.getSupportedResolution(
-            encoderInfo, VIDEO_H264, /* width= */ 7500, /* height= */ 5000);
-
-    assertThat(closestSupportedResolution).isNotNull();
-    assertThat(
-            (double) closestSupportedResolution.getWidth() / closestSupportedResolution.getHeight())
-        .isEqualTo(7500.0 / 5000);
-  }
-
-  /**
-   * @see EncoderUtil#getSupportedEncodersForHdrEditing(String, ColorInfo)
-   */
-  @Config(sdk = {30, 31})
-  @Test
-  public void getSupportedEncodersForHdrEditing_returnsEmptyList() {
-    // This test is run on 30 and 31 because the tested logic differentiate at API31.
-    // getSupportedEncoderNamesForHdrEditing returns an empty list for API < 31. It returns an empty
-    // list for API >= 31 as well, because currently it is not possible to make ShadowMediaCodec
-    // support HDR.
-    assertThat(
-            EncoderUtil.getSupportedEncodersForHdrEditing(
-                VIDEO_H264,
-                new ColorInfo.Builder()
-                    .setColorSpace(C.COLOR_SPACE_BT2020)
-                    .setColorRange(C.COLOR_RANGE_FULL)
-                    .setColorTransfer(C.COLOR_TRANSFER_HLG)
-                    .build()))
-        .isEmpty();
   }
 }

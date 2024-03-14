@@ -21,10 +21,9 @@ import static java.lang.annotation.ElementType.TYPE_USE;
 import static java.lang.annotation.RetentionPolicy.SOURCE;
 
 import android.graphics.Matrix;
-import androidx.annotation.FloatRange;
+import android.util.Pair;
 import androidx.annotation.IntDef;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.util.Size;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
@@ -37,13 +36,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
  * match the specified output frame, or fitting the input frame using letterboxing).
  *
  * <p>The background color of the output frame will be black, with alpha = 0 if applicable.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 public final class Presentation implements MatrixTransformation {
 
   /**
@@ -121,9 +114,10 @@ public final class Presentation implements MatrixTransformation {
    * @param aspectRatio The aspect ratio (width/height ratio) of the output frame. Must be positive.
    * @param layout The layout of the output frame.
    */
-  public static Presentation createForAspectRatio(
-      @FloatRange(from = 0, fromInclusive = false) float aspectRatio, @Layout int layout) {
-    checkArgument(aspectRatio > 0, "aspect ratio " + aspectRatio + " must be positive");
+  public static Presentation createForAspectRatio(float aspectRatio, @Layout int layout) {
+    checkArgument(
+        aspectRatio == C.LENGTH_UNSET || aspectRatio > 0,
+        "aspect ratio " + aspectRatio + " must be positive or unset");
     checkLayout(layout);
     return new Presentation(
         /* width= */ C.LENGTH_UNSET, /* height= */ C.LENGTH_UNSET, aspectRatio, layout);
@@ -133,7 +127,7 @@ public final class Presentation implements MatrixTransformation {
    * Creates a new {@link Presentation} instance.
    *
    * <p>The output frame will have the given height. Width will scale to preserve the input aspect
-   * ratio. For example, a 1920x1440 video can be scaled to 640x480 by passing a height of 480.
+   * ratio.
    *
    * @param height The height of the output frame, in pixels.
    */
@@ -171,7 +165,7 @@ public final class Presentation implements MatrixTransformation {
 
   private Presentation(int width, int height, float aspectRatio, @Layout int layout) {
     checkArgument(
-        (aspectRatio == ASPECT_RATIO_UNSET) || (width == C.LENGTH_UNSET),
+        (aspectRatio == C.LENGTH_UNSET) || (width == C.LENGTH_UNSET),
         "width and aspect ratio should not both be set");
 
     this.requestedWidthPixels = width;
@@ -185,7 +179,7 @@ public final class Presentation implements MatrixTransformation {
   }
 
   @Override
-  public Size configure(int inputWidth, int inputHeight) {
+  public Pair<Integer, Integer> configure(int inputWidth, int inputHeight) {
     checkArgument(inputWidth > 0, "inputWidth must be positive");
     checkArgument(inputHeight > 0, "inputHeight must be positive");
 
@@ -197,7 +191,7 @@ public final class Presentation implements MatrixTransformation {
       requestedAspectRatio = (float) requestedWidthPixels / requestedHeightPixels;
     }
 
-    if (requestedAspectRatio != ASPECT_RATIO_UNSET) {
+    if (requestedAspectRatio != C.LENGTH_UNSET) {
       applyAspectRatio();
     }
 
@@ -210,20 +204,12 @@ public final class Presentation implements MatrixTransformation {
       }
       outputHeight = requestedHeightPixels;
     }
-    return new Size(Math.round(outputWidth), Math.round(outputHeight));
+    return Pair.create(Math.round(outputWidth), Math.round(outputHeight));
   }
 
   @Override
   public Matrix getMatrix(long presentationTimeUs) {
     return checkStateNotNull(transformationMatrix, "configure must be called first");
-  }
-
-  @Override
-  public boolean isNoOp(int inputWidth, int inputHeight) {
-    configure(inputWidth, inputHeight);
-    return checkStateNotNull(transformationMatrix).isIdentity()
-        && inputWidth == Math.round(outputWidth)
-        && inputHeight == Math.round(outputHeight);
   }
 
   @RequiresNonNull("transformationMatrix")

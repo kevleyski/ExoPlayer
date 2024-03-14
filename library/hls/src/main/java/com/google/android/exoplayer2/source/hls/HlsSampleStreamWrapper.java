@@ -71,7 +71,6 @@ import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.common.primitives.Ints;
 import java.io.EOFException;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -89,13 +88,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 /**
  * Loads {@link HlsMediaChunk}s obtained from a {@link HlsChunkSource}, and provides {@link
  * SampleStream}s from which the loaded media can be consumed.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 /* package */ final class HlsSampleStreamWrapper
     implements Loader.Callback<Chunk>,
         Loader.ReleaseCallback,
@@ -564,8 +557,8 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     }
   }
 
-  public void setIsPrimaryTimestampSource(boolean isPrimaryTimestampSource) {
-    chunkSource.setIsPrimaryTimestampSource(isPrimaryTimestampSource);
+  public void setIsTimestampMaster(boolean isTimestampMaster) {
+    chunkSource.setIsTimestampMaster(isTimestampMaster);
   }
 
   /**
@@ -671,7 +664,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       Format format = Assertions.checkNotNull(formatHolder.format);
       if (sampleQueueIndex == primarySampleQueueIndex) {
         // Fill in primary sample format with information from the track format.
-        int chunkUid = Ints.checkedCast(sampleQueues[sampleQueueIndex].peekSourceId());
+        int chunkUid = sampleQueues[sampleQueueIndex].peekSourceId();
         int chunkIndex = 0;
         while (chunkIndex < mediaChunks.size() && mediaChunks.get(chunkIndex).uid != chunkUid) {
           chunkIndex++;
@@ -1556,7 +1549,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       sampleMimeType = MimeTypes.getMediaMimeType(codecs);
     } else {
       // The variant assigns more than one codec string to this track. We choose whichever codec
-      // string matches the sample MIME type. This can happen when different languages are encoded
+      // string matches the sample mime type. This can happen when different languages are encoded
       // using different codecs.
       codecs =
           MimeTypes.getCodecsCorrespondingToMimeType(

@@ -36,13 +36,7 @@ import java.nio.ByteBuffer;
 /**
  * Utility methods for parsing Dolby TrueHD and (E-)AC-3 syncframes. (E-)AC-3 parsing follows the
  * definition in ETSI TS 102 366 V1.4.1.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 public final class Ac3Util {
 
   /** Holds sample format information as presented by a syncframe header. */
@@ -67,7 +61,7 @@ public final class Ac3Util {
     public static final int STREAM_TYPE_TYPE2 = 2;
 
     /**
-     * The sample MIME type of the bitstream. One of {@link MimeTypes#AUDIO_AC3} and {@link
+     * The sample mime type of the bitstream. One of {@link MimeTypes#AUDIO_AC3} and {@link
      * MimeTypes#AUDIO_E_AC3}.
      */
     @Nullable public final String mimeType;
@@ -218,7 +212,7 @@ public final class Ac3Util {
     int numDepSub = dataBitArray.readBits(4); // num_dep_sub
     dataBitArray.skipBits(1); // numDepSub > 0 ? LFE2 : reserved
     if (numDepSub > 0) {
-      dataBitArray.skipBits(6); // other channel configurations
+      dataBitArray.skipBytes(6); // other channel configurations
       // Read Lrs/Rrs pair
       // TODO: Read other channel configuration
       if (dataBitArray.readBits(1) != 0) {
@@ -454,7 +448,7 @@ public final class Ac3Util {
       int fscod = data.readBits(2);
       if (fscod == 3) {
         // fscod '11' indicates that the decoder should not attempt to decode audio. We invalidate
-        // the MIME type to prevent association with a renderer.
+        // the mime type to prevent association with a renderer.
         mimeType = null;
       }
       int frmsizecod = data.readBits(6);

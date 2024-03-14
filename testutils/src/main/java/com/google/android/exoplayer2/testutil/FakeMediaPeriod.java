@@ -232,7 +232,7 @@ public class FakeMediaPeriod implements MediaPeriod {
         C.SELECTION_REASON_UNKNOWN,
         /* trackSelectionData= */ null,
         /* mediaStartTimeUs= */ 0,
-        /* mediaEndTimeUs= */ C.TIME_UNSET);
+        /* mediaEndTimeUs = */ C.TIME_UNSET);
     prepareCallback = callback;
     if (deferOnPrepared) {
       playerHandler = Util.createHandlerForCurrentLooper();
@@ -336,8 +336,7 @@ public class FakeMediaPeriod implements MediaPeriod {
     lastSeekPositionUs = seekPositionUs;
     boolean seekedInsideStreams = true;
     for (FakeSampleStream sampleStream : sampleStreams) {
-      seekedInsideStreams &=
-          sampleStream.seekToUs(seekPositionUs, /* allowTimeBeyondBuffer= */ false);
+      seekedInsideStreams &= sampleStream.seekToUs(seekPositionUs);
     }
     if (!seekedInsideStreams) {
       for (FakeSampleStream sampleStream : sampleStreams) {
@@ -418,7 +417,7 @@ public class FakeMediaPeriod implements MediaPeriod {
         C.SELECTION_REASON_UNKNOWN,
         /* trackSelectionData= */ null,
         /* mediaStartTimeUs= */ 0,
-        /* mediaEndTimeUs= */ C.TIME_UNSET);
+        /* mediaEndTimeUs = */ C.TIME_UNSET);
   }
 
   private boolean isLoadingFinished() {

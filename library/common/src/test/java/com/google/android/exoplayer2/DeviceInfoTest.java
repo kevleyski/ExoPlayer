@@ -28,11 +28,7 @@ public class DeviceInfoTest {
   @Test
   public void roundTripViaBundle_yieldsEqualInstance() {
     DeviceInfo deviceInfo =
-        new DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE)
-            .setMinVolume(1)
-            .setMaxVolume(9)
-            .setRoutingControllerId("route")
-            .build();
+        new DeviceInfo(DeviceInfo.PLAYBACK_TYPE_REMOTE, /* minVolume= */ 1, /* maxVolume= */ 9);
 
     assertThat(DeviceInfo.CREATOR.fromBundle(deviceInfo.toBundle())).isEqualTo(deviceInfo);
   }

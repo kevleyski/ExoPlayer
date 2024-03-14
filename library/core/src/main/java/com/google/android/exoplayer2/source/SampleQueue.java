@@ -51,15 +51,7 @@ import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 
-/**
- * A queue of media samples.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** A queue of media samples. */
 public class SampleQueue implements TrackOutput {
 
   /** A listener for changes to the upstream format. */
@@ -87,7 +79,7 @@ public class SampleQueue implements TrackOutput {
   @Nullable private DrmSession currentDrmSession;
 
   private int capacity;
-  private long[] sourceIds;
+  private int[] sourceIds;
   private long[] offsets;
   private int[] sizes;
   private int[] flags;
@@ -108,7 +100,7 @@ public class SampleQueue implements TrackOutput {
   private boolean upstreamFormatAdjustmentRequired;
   @Nullable private Format unadjustedUpstreamFormat;
   @Nullable private Format upstreamFormat;
-  private long upstreamSourceId;
+  private int upstreamSourceId;
   private boolean upstreamAllSamplesAreSyncSamples;
   private boolean loggedUnexpectedNonSyncSample;
 
@@ -174,7 +166,7 @@ public class SampleQueue implements TrackOutput {
     sampleDataQueue = new SampleDataQueue(allocator);
     extrasHolder = new SampleExtrasHolder();
     capacity = SAMPLE_CAPACITY_INCREMENT;
-    sourceIds = new long[capacity];
+    sourceIds = new int[capacity];
     offsets = new long[capacity];
     timesUs = new long[capacity];
     flags = new int[capacity];
@@ -246,7 +238,7 @@ public class SampleQueue implements TrackOutput {
    *
    * @param sourceId The source identifier.
    */
-  public final void sourceId(long sourceId) {
+  public final void sourceId(int sourceId) {
     upstreamSourceId = sourceId;
   }
 
@@ -324,7 +316,7 @@ public class SampleQueue implements TrackOutput {
    *
    * @return The source id.
    */
-  public final synchronized long peekSourceId() {
+  public final synchronized int peekSourceId() {
     int relativeReadIndex = getRelativeIndex(readPosition);
     return hasNextSample() ? sourceIds[relativeReadIndex] : upstreamSourceId;
   }
@@ -722,9 +714,6 @@ public class SampleQueue implements TrackOutput {
     }
 
     buffer.setFlags(flags[relativeReadIndex]);
-    if (readPosition == (length - 1) && (loadingFinished || isLastSampleQueued)) {
-      buffer.addFlag(C.BUFFER_FLAG_LAST_SAMPLE);
-    }
     buffer.timeUs = timesUs[relativeReadIndex];
     if (buffer.timeUs < startTimeUs) {
       buffer.addFlag(C.BUFFER_FLAG_DECODE_ONLY);
@@ -763,26 +752,26 @@ public class SampleQueue implements TrackOutput {
   private synchronized long discardSampleMetadataTo(
       long timeUs, boolean toKeyframe, boolean stopAtReadPosition) {
     if (length == 0 || timeUs < timesUs[relativeFirstIndex]) {
-      return C.INDEX_UNSET;
+      return C.POSITION_UNSET;
     }
     int searchLength = stopAtReadPosition && readPosition != length ? readPosition + 1 : length;
     int discardCount = findSampleBefore(relativeFirstIndex, searchLength, timeUs, toKeyframe);
     if (discardCount == -1) {
-      return C.INDEX_UNSET;
+      return C.POSITION_UNSET;
     }
     return discardSamples(discardCount);
   }
 
   public synchronized long discardSampleMetadataToRead() {
     if (readPosition == 0) {
-      return C.INDEX_UNSET;
+      return C.POSITION_UNSET;
     }
     return discardSamples(readPosition);
   }
 
   private synchronized long discardSampleMetadataToEnd() {
     if (length == 0) {
-      return C.INDEX_UNSET;
+      return C.POSITION_UNSET;
     }
     return discardSamples(length);
   }
@@ -837,7 +826,7 @@ public class SampleQueue implements TrackOutput {
     if (length == capacity) {
       // Increase the capacity.
       int newCapacity = capacity + SAMPLE_CAPACITY_INCREMENT;
-      long[] newSourceIds = new long[newCapacity];
+      int[] newSourceIds = new int[newCapacity];
       long[] newOffsets = new long[newCapacity];
       long[] newTimesUs = new long[newCapacity];
       int[] newFlags = new int[newCapacity];

@@ -39,15 +39,7 @@ import java.util.List;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
-/**
- * Merges multiple {@link MediaPeriod}s.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Merges multiple {@link MediaPeriod}s. */
 /* package */ final class MergingMediaPeriod implements MediaPeriod, MediaPeriod.Callback {
 
   private final MediaPeriod[] periods;
@@ -603,18 +595,13 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     }
 
     @Override
-    public boolean excludeTrack(int index, long exclusionDurationMs) {
-      return trackSelection.excludeTrack(index, exclusionDurationMs);
+    public boolean blacklist(int index, long exclusionDurationMs) {
+      return trackSelection.blacklist(index, exclusionDurationMs);
     }
 
     @Override
-    public boolean isTrackExcluded(int index, long nowMs) {
-      return trackSelection.isTrackExcluded(index, nowMs);
-    }
-
-    @Override
-    public long getLatestBitrateEstimate() {
-      return trackSelection.getLatestBitrateEstimate();
+    public boolean isBlacklisted(int index, long nowMs) {
+      return trackSelection.isBlacklisted(index, nowMs);
     }
 
     @Override

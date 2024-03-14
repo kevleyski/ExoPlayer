@@ -19,9 +19,11 @@ import static com.google.android.exoplayer2.Player.COMMAND_GET_CURRENT_MEDIA_ITE
 import static com.google.android.exoplayer2.Player.COMMAND_GET_TIMELINE;
 import static com.google.android.exoplayer2.Player.COMMAND_GET_TRACKS;
 import static com.google.android.exoplayer2.Player.COMMAND_PLAY_PAUSE;
+import static com.google.android.exoplayer2.Player.COMMAND_PREPARE;
 import static com.google.android.exoplayer2.Player.COMMAND_SEEK_BACK;
 import static com.google.android.exoplayer2.Player.COMMAND_SEEK_FORWARD;
 import static com.google.android.exoplayer2.Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM;
+import static com.google.android.exoplayer2.Player.COMMAND_SEEK_TO_DEFAULT_POSITION;
 import static com.google.android.exoplayer2.Player.COMMAND_SEEK_TO_MEDIA_ITEM;
 import static com.google.android.exoplayer2.Player.COMMAND_SEEK_TO_NEXT;
 import static com.google.android.exoplayer2.Player.COMMAND_SEEK_TO_PREVIOUS;
@@ -75,6 +77,7 @@ import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Player.Events;
+import com.google.android.exoplayer2.Player.State;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.Tracks;
 import com.google.android.exoplayer2.source.TrackGroup;
@@ -187,13 +190,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   <li><b>{@code exo_styled_controls_shuffle_on}</b> - The shuffle icon when shuffling is enabled.
  *   <li><b>{@code exo_styled_controls_vr}</b> - The VR icon.
  * </ul>
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 public class StyledPlayerControlView extends FrameLayout {
 
   static {
@@ -987,17 +984,17 @@ public class StyledPlayerControlView extends FrameLayout {
       return;
     }
     if (playPauseButton != null) {
-      boolean shouldShowPlayButton = Util.shouldShowPlayButton(player);
+      boolean shouldShowPauseButton = shouldShowPauseButton();
       @DrawableRes
       int drawableRes =
-          shouldShowPlayButton
-              ? R.drawable.exo_styled_controls_play
-              : R.drawable.exo_styled_controls_pause;
+          shouldShowPauseButton
+              ? R.drawable.exo_styled_controls_pause
+              : R.drawable.exo_styled_controls_play;
       @StringRes
       int stringRes =
-          shouldShowPlayButton
-              ? R.string.exo_controls_play_description
-              : R.string.exo_controls_pause_description;
+          shouldShowPauseButton
+              ? R.string.exo_controls_pause_description
+              : R.string.exo_controls_play_description;
       ((ImageView) playPauseButton)
           .setImageDrawable(getDrawable(getContext(), resources, drawableRes));
       playPauseButton.setContentDescription(resources.getString(stringRes));
@@ -1486,13 +1483,13 @@ public class StyledPlayerControlView extends FrameLayout {
         switch (keyCode) {
           case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
           case KeyEvent.KEYCODE_HEADSETHOOK:
-            Util.handlePlayPauseButtonAction(player);
+            dispatchPlayPause(player);
             break;
           case KeyEvent.KEYCODE_MEDIA_PLAY:
-            Util.handlePlayButtonAction(player);
+            dispatchPlay(player);
             break;
           case KeyEvent.KEYCODE_MEDIA_PAUSE:
-            Util.handlePauseButtonAction(player);
+            dispatchPause(player);
             break;
           case KeyEvent.KEYCODE_MEDIA_NEXT:
             if (player.isCommandAvailable(COMMAND_SEEK_TO_NEXT)) {
@@ -1546,6 +1543,41 @@ public class StyledPlayerControlView extends FrameLayout {
         && player.isCommandAvailable(COMMAND_PLAY_PAUSE)
         && (!player.isCommandAvailable(COMMAND_GET_TIMELINE)
             || !player.getCurrentTimeline().isEmpty());
+  }
+
+  private boolean shouldShowPauseButton() {
+    return player != null
+        && player.getPlaybackState() != Player.STATE_ENDED
+        && player.getPlaybackState() != Player.STATE_IDLE
+        && player.getPlayWhenReady();
+  }
+
+  private void dispatchPlayPause(Player player) {
+    @State int state = player.getPlaybackState();
+    if (state == Player.STATE_IDLE || state == Player.STATE_ENDED || !player.getPlayWhenReady()) {
+      dispatchPlay(player);
+    } else {
+      dispatchPause(player);
+    }
+  }
+
+  private void dispatchPlay(Player player) {
+    @State int state = player.getPlaybackState();
+    if (state == Player.STATE_IDLE && player.isCommandAvailable(COMMAND_PREPARE)) {
+      player.prepare();
+    } else if (state == Player.STATE_ENDED
+        && player.isCommandAvailable(COMMAND_SEEK_TO_DEFAULT_POSITION)) {
+      player.seekToDefaultPosition();
+    }
+    if (player.isCommandAvailable(COMMAND_PLAY_PAUSE)) {
+      player.play();
+    }
+  }
+
+  private void dispatchPause(Player player) {
+    if (player.isCommandAvailable(COMMAND_PLAY_PAUSE)) {
+      player.pause();
+    }
   }
 
   @SuppressLint("InlinedApi")
@@ -1717,7 +1749,7 @@ public class StyledPlayerControlView extends FrameLayout {
           player.seekBack();
         }
       } else if (playPauseButton == view) {
-        Util.handlePlayPauseButtonAction(player);
+        dispatchPlayPause(player);
       } else if (repeatToggleButton == view) {
         if (player.isCommandAvailable(COMMAND_SET_REPEAT_MODE)) {
           player.setRepeatMode(

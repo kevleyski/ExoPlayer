@@ -16,7 +16,6 @@
 package com.google.android.exoplayer2.video;
 
 import androidx.annotation.Nullable;
-import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.util.CodecSpecificDataUtil;
@@ -26,15 +25,7 @@ import com.google.android.exoplayer2.util.ParsableByteArray;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * AVC configuration data.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** AVC configuration data. */
 public final class AvcConfig {
 
   /**
@@ -64,9 +55,6 @@ public final class AvcConfig {
 
       int width = Format.NO_VALUE;
       int height = Format.NO_VALUE;
-      @C.ColorSpace int colorSpace = Format.NO_VALUE;
-      @C.ColorRange int colorRange = Format.NO_VALUE;
-      @C.ColorTransfer int colorTransfer = Format.NO_VALUE;
       float pixelWidthHeightRatio = 1;
       @Nullable String codecs = null;
       if (numSequenceParameterSets > 0) {
@@ -76,9 +64,6 @@ public final class AvcConfig {
                 initializationData.get(0), nalUnitLengthFieldLength, sps.length);
         width = spsData.width;
         height = spsData.height;
-        colorSpace = spsData.colorSpace;
-        colorRange = spsData.colorRange;
-        colorTransfer = spsData.colorTransfer;
         pixelWidthHeightRatio = spsData.pixelWidthHeightRatio;
         codecs =
             CodecSpecificDataUtil.buildAvcCodecString(
@@ -90,9 +75,6 @@ public final class AvcConfig {
           nalUnitLengthFieldLength,
           width,
           height,
-          colorSpace,
-          colorRange,
-          colorTransfer,
           pixelWidthHeightRatio,
           codecs);
     } catch (ArrayIndexOutOfBoundsException e) {
@@ -116,22 +98,6 @@ public final class AvcConfig {
   /** The height of each decoded frame, or {@link Format#NO_VALUE} if unknown. */
   public final int height;
 
-  /**
-   * The {@link C.ColorSpace} of the video, or {@link Format#NO_VALUE} if unknown or not applicable.
-   */
-  public final @C.ColorSpace int colorSpace;
-
-  /**
-   * The {@link C.ColorRange} of the video, or {@link Format#NO_VALUE} if unknown or not applicable.
-   */
-  public final @C.ColorRange int colorRange;
-
-  /**
-   * The {@link C.ColorTransfer} of the video, or {@link Format#NO_VALUE} if unknown or not
-   * applicable.
-   */
-  public final @C.ColorTransfer int colorTransfer;
-
   /** The pixel width to height ratio. */
   public final float pixelWidthHeightRatio;
 
@@ -147,18 +113,12 @@ public final class AvcConfig {
       int nalUnitLengthFieldLength,
       int width,
       int height,
-      @C.ColorSpace int colorSpace,
-      @C.ColorRange int colorRange,
-      @C.ColorTransfer int colorTransfer,
       float pixelWidthHeightRatio,
       @Nullable String codecs) {
     this.initializationData = initializationData;
     this.nalUnitLengthFieldLength = nalUnitLengthFieldLength;
     this.width = width;
     this.height = height;
-    this.colorSpace = colorSpace;
-    this.colorRange = colorRange;
-    this.colorTransfer = colorTransfer;
     this.pixelWidthHeightRatio = pixelWidthHeightRatio;
     this.codecs = codecs;
   }

@@ -35,33 +35,26 @@ import androidx.annotation.VisibleForTesting;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
-import com.google.android.exoplayer2.effect.DebugTraceUtil;
 import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.MediaFormatUtil;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.TraceUtil;
-import com.google.android.exoplayer2.util.Util;
+import com.google.android.exoplayer2.video.ColorInfo;
+import com.google.common.base.Ascii;
+import com.google.common.collect.ImmutableList;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import org.checkerframework.checker.initialization.qual.UnknownInitialization;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
-/**
- * A default {@link Codec} implementation that uses {@link MediaCodec}.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** A default {@link Codec} implementation that uses {@link MediaCodec}. */
 public final class DefaultCodec implements Codec {
-  // MediaCodec decoders output 16 bit PCM, unless configured to output PCM float.
-  // https://developer.android.com/reference/android/media/MediaCodec#raw-audio-buffers.
-  public static final int DEFAULT_PCM_ENCODING = C.ENCODING_PCM_16BIT;
 
   private static final String TAG = "DefaultCodec";
+
+  // MediaCodec decoders always output 16 bit PCM, unless configured to output PCM float.
+  // https://developer.android.com/reference/android/media/MediaCodec#raw-audio-buffers.
+  private static final int MEDIA_CODEC_PCM_ENCODING = C.ENCODING_PCM_16BIT;
 
   private final BufferInfo outputBufferInfo;
   /** The {@link MediaFormat} used to configure the underlying {@link MediaCodec}. */
@@ -70,9 +63,7 @@ public final class DefaultCodec implements Codec {
   private final Format configurationFormat;
   private final MediaCodec mediaCodec;
   @Nullable private final Surface inputSurface;
-  private final int maxPendingFrameCount;
-  private final boolean isDecoder;
-  private final boolean isVideo;
+  private final boolean decoderNeedsFrameDroppingWorkaround;
 
   private @MonotonicNonNull Format outputFormat;
   @Nullable private ByteBuffer outputBuffer;
@@ -102,28 +93,27 @@ public final class DefaultCodec implements Codec {
       String mediaCodecName,
       boolean isDecoder,
       @Nullable Surface outputSurface)
-      throws ExportException {
+      throws TransformationException {
     this.configurationFormat = configurationFormat;
     this.configurationMediaFormat = configurationMediaFormat;
-    this.isDecoder = isDecoder;
-    isVideo = MimeTypes.isVideo(checkNotNull(configurationFormat.sampleMimeType));
     outputBufferInfo = new BufferInfo();
     inputBufferIndex = C.INDEX_UNSET;
     outputBufferIndex = C.INDEX_UNSET;
 
+    boolean isVideo = MimeTypes.isVideo(checkNotNull(configurationFormat.sampleMimeType));
     @Nullable MediaCodec mediaCodec = null;
     @Nullable Surface inputSurface = null;
-    boolean requestedHdrToneMapping = isSdrToneMappingEnabled(configurationMediaFormat);
-
     try {
+      boolean requestedHdrToneMapping =
+          SDK_INT >= 29 && Api29.isSdrToneMappingEnabled(configurationMediaFormat);
       mediaCodec = MediaCodec.createByCodecName(mediaCodecName);
       configureCodec(mediaCodec, configurationMediaFormat, isDecoder, outputSurface);
-      if (requestedHdrToneMapping) {
+      if (SDK_INT >= 29 && requestedHdrToneMapping) {
         // The MediaCodec input format reflects whether tone-mapping is possible after configure().
         // See
         // https://developer.android.com/reference/android/media/MediaFormat#KEY_COLOR_TRANSFER_REQUEST.
         checkArgument(
-            isSdrToneMappingEnabled(mediaCodec.getInputFormat()),
+            Api29.isSdrToneMappingEnabled(mediaCodec.getInputFormat()),
             "Tone-mapping requested but not supported by the decoder.");
       }
       if (isVideo && !isDecoder) {
@@ -131,8 +121,6 @@ public final class DefaultCodec implements Codec {
       }
       startCodec(mediaCodec);
     } catch (Exception e) {
-      Log.d(TAG, "MediaCodec error", e);
-
       if (inputSurface != null) {
         inputSurface.release();
       }
@@ -140,27 +128,12 @@ public final class DefaultCodec implements Codec {
         mediaCodec.release();
       }
 
-      @ExportException.ErrorCode int errorCode;
-      if (e instanceof IOException || e instanceof MediaCodec.CodecException) {
-        errorCode =
-            isDecoder
-                ? ExportException.ERROR_CODE_DECODER_INIT_FAILED
-                : ExportException.ERROR_CODE_ENCODER_INIT_FAILED;
-      } else if (e instanceof IllegalArgumentException) {
-        errorCode =
-            isDecoder
-                ? ExportException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
-                : ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED;
-      } else {
-        errorCode = ExportException.ERROR_CODE_FAILED_RUNTIME_CHECK;
-      }
-      throw createExportException(e, errorCode, mediaCodecName);
+      throw createInitializationTransformationException(
+          e, configurationMediaFormat, isVideo, isDecoder, mediaCodecName);
     }
     this.mediaCodec = mediaCodec;
     this.inputSurface = inputSurface;
-    maxPendingFrameCount =
-        Util.getMaxPendingFramesCountForMediaCodecDecoders(
-            context, mediaCodecName, requestedHdrToneMapping);
+    decoderNeedsFrameDroppingWorkaround = decoderNeedsFrameDroppingWorkaround(context);
   }
 
   @Override
@@ -175,12 +148,28 @@ public final class DefaultCodec implements Codec {
 
   @Override
   public int getMaxPendingFrameCount() {
-    return maxPendingFrameCount;
+    if (decoderNeedsFrameDroppingWorkaround) {
+      // Allow a maximum of one frame to be pending at a time to prevent frame dropping.
+      // TODO(b/226330223): Investigate increasing this limit.
+      return 1;
+    }
+    if (Ascii.toUpperCase(getName()).startsWith("OMX.")) {
+      // Some OMX decoders don't correctly track their number of output buffers available, and get
+      // stuck if too many frames are rendered without being processed, so limit the number of
+      // pending frames to avoid getting stuck. This value is experimentally determined. See also
+      // b/213455700, b/230097284, b/229978305, and b/245491744.
+      // TODO(b/230097284): Add a maximum API check after we know which APIs will never use OMX.
+      return 5;
+    }
+    // Otherwise don't limit the number of frames that can be pending at a time, to maximize
+    // throughput.
+    return UNLIMITED_PENDING_FRAME_COUNT;
   }
 
   @Override
   @EnsuresNonNullIf(expression = "#1.data", result = true)
-  public boolean maybeDequeueInputBuffer(DecoderInputBuffer inputBuffer) throws ExportException {
+  public boolean maybeDequeueInputBuffer(DecoderInputBuffer inputBuffer)
+      throws TransformationException {
     if (inputStreamEnded) {
       return false;
     }
@@ -188,8 +177,7 @@ public final class DefaultCodec implements Codec {
       try {
         inputBufferIndex = mediaCodec.dequeueInputBuffer(/* timeoutUs= */ 0);
       } catch (RuntimeException e) {
-        Log.d(TAG, "MediaCodec error", e);
-        throw createExportException(e);
+        throw createTransformationException(e);
       }
       if (inputBufferIndex < 0) {
         return false;
@@ -197,8 +185,7 @@ public final class DefaultCodec implements Codec {
       try {
         inputBuffer.data = mediaCodec.getInputBuffer(inputBufferIndex);
       } catch (RuntimeException e) {
-        Log.d(TAG, "MediaCodec error", e);
-        throw createExportException(e);
+        throw createTransformationException(e);
       }
       inputBuffer.clear();
     }
@@ -207,7 +194,7 @@ public final class DefaultCodec implements Codec {
   }
 
   @Override
-  public void queueInputBuffer(DecoderInputBuffer inputBuffer) throws ExportException {
+  public void queueInputBuffer(DecoderInputBuffer inputBuffer) throws TransformationException {
     checkState(
         !inputStreamEnded, "Input buffer can not be queued after the input stream has ended.");
 
@@ -221,34 +208,28 @@ public final class DefaultCodec implements Codec {
     if (inputBuffer.isEndOfStream()) {
       inputStreamEnded = true;
       flags = MediaCodec.BUFFER_FLAG_END_OF_STREAM;
-      if (isVideo && isDecoder) {
-        DebugTraceUtil.recordDecoderReceiveEos();
-      }
     }
     try {
       mediaCodec.queueInputBuffer(inputBufferIndex, offset, size, inputBuffer.timeUs, flags);
     } catch (RuntimeException e) {
-      Log.d(TAG, "MediaCodec error", e);
-      throw createExportException(e);
+      throw createTransformationException(e);
     }
     inputBufferIndex = C.INDEX_UNSET;
     inputBuffer.data = null;
   }
 
   @Override
-  public void signalEndOfInputStream() throws ExportException {
-    DebugTraceUtil.recordEncoderReceiveEos();
+  public void signalEndOfInputStream() throws TransformationException {
     try {
       mediaCodec.signalEndOfInputStream();
     } catch (RuntimeException e) {
-      Log.d(TAG, "MediaCodec error", e);
-      throw createExportException(e);
+      throw createTransformationException(e);
     }
   }
 
   @Override
   @Nullable
-  public Format getOutputFormat() throws ExportException {
+  public Format getOutputFormat() throws TransformationException {
     // The format is updated when dequeueing a 'special' buffer index, so attempt to dequeue now.
     maybeDequeueOutputBuffer(/* setOutputBuffer= */ false);
     return outputFormat;
@@ -256,39 +237,29 @@ public final class DefaultCodec implements Codec {
 
   @Override
   @Nullable
-  public ByteBuffer getOutputBuffer() throws ExportException {
+  public ByteBuffer getOutputBuffer() throws TransformationException {
     return maybeDequeueOutputBuffer(/* setOutputBuffer= */ true) ? outputBuffer : null;
   }
 
   @Override
   @Nullable
-  public BufferInfo getOutputBufferInfo() throws ExportException {
+  public BufferInfo getOutputBufferInfo() throws TransformationException {
     return maybeDequeueOutputBuffer(/* setOutputBuffer= */ false) ? outputBufferInfo : null;
   }
 
   @Override
-  public void releaseOutputBuffer(boolean render) throws ExportException {
-    releaseOutputBuffer(render, checkStateNotNull(outputBufferInfo).presentationTimeUs);
-  }
-
-  @Override
-  public void releaseOutputBuffer(long renderPresentationTimeUs) throws ExportException {
-    releaseOutputBuffer(/* render= */ true, renderPresentationTimeUs);
-  }
-
-  private void releaseOutputBuffer(boolean render, long renderPresentationTimeUs)
-      throws ExportException {
+  public void releaseOutputBuffer(boolean render) throws TransformationException {
     outputBuffer = null;
     try {
       if (render) {
         mediaCodec.releaseOutputBuffer(
-            outputBufferIndex, /* renderTimestampNs= */ renderPresentationTimeUs * 1000);
+            outputBufferIndex,
+            /* renderTimestampNs= */ checkStateNotNull(outputBufferInfo).presentationTimeUs * 1000);
       } else {
         mediaCodec.releaseOutputBuffer(outputBufferIndex, /* render= */ false);
       }
     } catch (RuntimeException e) {
-      Log.d(TAG, "MediaCodec error", e);
-      throw createExportException(e);
+      throw createTransformationException(e);
     }
     outputBufferIndex = C.INDEX_UNSET;
   }
@@ -332,9 +303,9 @@ public final class DefaultCodec implements Codec {
    * @param setOutputBuffer Whether to read the bytes of the dequeued output buffer and copy them
    *     into {@link #outputBuffer}.
    * @return Whether there is an output buffer available.
-   * @throws ExportException If the underlying {@link MediaCodec} encounters a problem.
+   * @throws TransformationException If the underlying {@link MediaCodec} encounters a problem.
    */
-  private boolean maybeDequeueOutputBuffer(boolean setOutputBuffer) throws ExportException {
+  private boolean maybeDequeueOutputBuffer(boolean setOutputBuffer) throws TransformationException {
     if (outputBufferIndex >= 0) {
       return true;
     }
@@ -345,12 +316,26 @@ public final class DefaultCodec implements Codec {
     try {
       outputBufferIndex = mediaCodec.dequeueOutputBuffer(outputBufferInfo, /* timeoutUs= */ 0);
     } catch (RuntimeException e) {
-      Log.d(TAG, "MediaCodec error", e);
-      throw createExportException(e);
+      throw createTransformationException(e);
     }
     if (outputBufferIndex < 0) {
       if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-        outputFormat = convertToFormat(mediaCodec.getOutputFormat(), isDecoder);
+        outputFormat = convertToFormat(mediaCodec.getOutputFormat());
+        boolean isToneMappingEnabled =
+            SDK_INT >= 29 && Api29.isSdrToneMappingEnabled(configurationMediaFormat);
+        ColorInfo expectedColorInfo =
+            isToneMappingEnabled ? ColorInfo.SDR_BT709_LIMITED : configurationFormat.colorInfo;
+        if (!areColorTransfersEqual(expectedColorInfo, outputFormat.colorInfo)) {
+          // TODO(b/237674316): The container ColorInfo's transfer doesn't match the decoder output
+          //   MediaFormat, or we requested tone-mapping but it hasn't been applied. We should
+          //   reconfigure downstream components for this case instead.
+          Log.w(
+              TAG,
+              "Codec output color format does not match configured color format. Expected: "
+                  + expectedColorInfo
+                  + ". Actual: "
+                  + outputFormat.colorInfo);
+        }
       }
       return false;
     }
@@ -360,7 +345,6 @@ public final class DefaultCodec implements Codec {
         releaseOutputBuffer(/* render= */ false);
         return false;
       }
-      outputBufferInfo.flags &= ~MediaCodec.BUFFER_FLAG_END_OF_STREAM;
     }
     if ((outputBufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
       // Encountered a CSD buffer, skip it.
@@ -372,8 +356,7 @@ public final class DefaultCodec implements Codec {
       try {
         outputBuffer = checkNotNull(mediaCodec.getOutputBuffer(outputBufferIndex));
       } catch (RuntimeException e) {
-        Log.d(TAG, "MediaCodec error", e);
-        throw createExportException(e);
+        throw createTransformationException(e);
       }
       outputBuffer.position(outputBufferInfo.offset);
       outputBuffer.limit(outputBufferInfo.offset + outputBufferInfo.size);
@@ -381,38 +364,92 @@ public final class DefaultCodec implements Codec {
     return true;
   }
 
-  private ExportException createExportException(Exception cause) {
-    return createExportException(
+  private TransformationException createTransformationException(Exception cause) {
+    boolean isDecoder = !mediaCodec.getCodecInfo().isEncoder();
+    boolean isVideo = MimeTypes.isVideo(configurationFormat.sampleMimeType);
+    return TransformationException.createForCodec(
         cause,
+        isVideo,
+        isDecoder,
+        configurationMediaFormat,
+        getName(),
         isDecoder
-            ? ExportException.ERROR_CODE_DECODING_FAILED
-            : ExportException.ERROR_CODE_ENCODING_FAILED,
-        getName());
+            ? TransformationException.ERROR_CODE_DECODING_FAILED
+            : TransformationException.ERROR_CODE_ENCODING_FAILED);
   }
 
-  /** Creates an {@link ExportException} with specific {@link MediaCodec} details. */
-  private ExportException createExportException(
-      @UnknownInitialization DefaultCodec this,
+  private static boolean areColorTransfersEqual(
+      @Nullable ColorInfo colorInfo1, @Nullable ColorInfo colorInfo2) {
+    @C.ColorTransfer int transfer1 = C.COLOR_TRANSFER_SDR;
+    if (colorInfo1 != null && colorInfo1.colorTransfer != Format.NO_VALUE) {
+      transfer1 = colorInfo1.colorTransfer;
+    }
+    @C.ColorTransfer int transfer2 = C.COLOR_TRANSFER_SDR;
+    if (colorInfo2 != null && colorInfo2.colorTransfer != Format.NO_VALUE) {
+      transfer2 = colorInfo2.colorTransfer;
+    }
+    return transfer1 == transfer2;
+  }
+
+  private static TransformationException createInitializationTransformationException(
       Exception cause,
-      @ExportException.ErrorCode int errorCode,
-      String mediaCodecName) {
-    String codecDetails =
-        "mediaFormat=" + configurationMediaFormat + ", mediaCodecName=" + mediaCodecName;
-    return ExportException.createForCodec(cause, errorCode, isVideo, isDecoder, codecDetails);
+      MediaFormat mediaFormat,
+      boolean isVideo,
+      boolean isDecoder,
+      @Nullable String mediaCodecName) {
+    if (cause instanceof IOException || cause instanceof MediaCodec.CodecException) {
+      return TransformationException.createForCodec(
+          cause,
+          isVideo,
+          isDecoder,
+          mediaFormat,
+          mediaCodecName,
+          isDecoder
+              ? TransformationException.ERROR_CODE_DECODER_INIT_FAILED
+              : TransformationException.ERROR_CODE_ENCODER_INIT_FAILED);
+    }
+    if (cause instanceof IllegalArgumentException) {
+      return TransformationException.createForCodec(
+          cause,
+          isVideo,
+          isDecoder,
+          mediaFormat,
+          mediaCodecName,
+          isDecoder
+              ? TransformationException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+              : TransformationException.ERROR_CODE_OUTPUT_FORMAT_UNSUPPORTED);
+    }
+    return TransformationException.createForUnexpected(cause);
   }
 
-  private static Format convertToFormat(MediaFormat mediaFormat, boolean isDecoder) {
+  private static Format convertToFormat(MediaFormat mediaFormat) {
+    ImmutableList.Builder<byte[]> csdBuffers = new ImmutableList.Builder<>();
+    int csdIndex = 0;
+    while (true) {
+      @Nullable ByteBuffer csdByteBuffer = mediaFormat.getByteBuffer("csd-" + csdIndex);
+      if (csdByteBuffer == null) {
+        break;
+      }
+      byte[] csdBufferData = new byte[csdByteBuffer.remaining()];
+      csdByteBuffer.get(csdBufferData);
+      csdBuffers.add(csdBufferData);
+      csdIndex++;
+    }
+    String mimeType = mediaFormat.getString(MediaFormat.KEY_MIME);
     Format.Builder formatBuilder =
-        MediaFormatUtil.createFormatFromMediaFormat(mediaFormat).buildUpon();
-    if (isDecoder) {
-      // TODO(b/178685617): Restrict this to only set the PCM encoding for audio/raw once we have
-      // a way to simulate more realistic codec input/output formats in tests.
-
-      // With Robolectric, codecs do not actually encode/decode. The format of buffers is passed
-      // through. However downstream components need to know the PCM encoding of the data being
-      // output, so if a decoder is not outputting raw audio, we need to set the PCM
-      // encoding to the default.
-      formatBuilder.setPcmEncoding(DEFAULT_PCM_ENCODING);
+        new Format.Builder().setSampleMimeType(mimeType).setInitializationData(csdBuffers.build());
+    if (MimeTypes.isVideo(mimeType)) {
+      formatBuilder
+          .setWidth(mediaFormat.getInteger(MediaFormat.KEY_WIDTH))
+          .setHeight(mediaFormat.getInteger(MediaFormat.KEY_HEIGHT))
+          .setColorInfo(MediaFormatUtil.getColorInfo(mediaFormat));
+    } else if (MimeTypes.isAudio(mimeType)) {
+      // TODO(b/178685617): Only set the PCM encoding for audio/raw, once we have a way to
+      // simulate more realistic codec input/output formats in tests.
+      formatBuilder
+          .setChannelCount(mediaFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT))
+          .setSampleRate(mediaFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE))
+          .setPcmEncoding(MEDIA_CODEC_PCM_ENCODING);
     }
     return formatBuilder.build();
   }
@@ -439,12 +476,13 @@ public final class DefaultCodec implements Codec {
     TraceUtil.endSection();
   }
 
-  private static boolean isSdrToneMappingEnabled(MediaFormat mediaFormat) {
-    // MediaFormat.KEY_COLOR_TRANSFER_REQUEST was added in API 31.
-    return SDK_INT >= 31
-        && MediaFormatUtil.getInteger(
-                mediaFormat, MediaFormat.KEY_COLOR_TRANSFER_REQUEST, /* defaultValue= */ 0)
-            == MediaFormat.COLOR_TRANSFER_SDR_VIDEO;
+  private static boolean decoderNeedsFrameDroppingWorkaround(Context context) {
+    // Prior to API 29, decoders may drop frames to keep their output surface from growing out of
+    // bounds. From API 29, if the app targets API 29 or later, the {@link
+    // MediaFormat#KEY_ALLOW_FRAME_DROP} key prevents frame dropping even when the surface is full.
+    // Frame dropping is never desired, so a workaround is needed for older API levels.
+    return SDK_INT < 29
+        || context.getApplicationContext().getApplicationInfo().targetSdkVersion < 29;
   }
 
   @RequiresApi(29)
@@ -452,6 +490,15 @@ public final class DefaultCodec implements Codec {
     @DoNotInline
     public static String getCanonicalName(MediaCodec mediaCodec) {
       return mediaCodec.getCanonicalName();
+    }
+
+    @DoNotInline
+    public static boolean isSdrToneMappingEnabled(MediaFormat mediaFormat) {
+      // MediaFormat.getInteger(String, int) was added in API 29 but applying a color transfer
+      // request is only possible from API 31.
+      return SDK_INT >= 31
+          && mediaFormat.getInteger(MediaFormat.KEY_COLOR_TRANSFER_REQUEST, /* defaultValue= */ 0)
+              == MediaFormat.COLOR_TRANSFER_SDR_VIDEO;
     }
   }
 }

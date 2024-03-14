@@ -17,8 +17,6 @@ package com.google.android.exoplayer2.audio;
 
 import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
 import static com.google.android.exoplayer2.util.Util.castNonNull;
-import static com.google.android.exoplayer2.util.Util.durationUsToSampleCount;
-import static com.google.android.exoplayer2.util.Util.sampleCountToDurationUs;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.annotation.ElementType.TYPE_USE;
@@ -46,13 +44,7 @@ import java.lang.reflect.Method;
  * #start()} immediately before calling {@link AudioTrack#play()}. Call {@link #pause()} when
  * pausing the track. Call {@link #handleEndOfStream(long)} when no more data will be written to the
  * track. When the audio track will no longer be used, call {@link #reset()}.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 /* package */ final class AudioTrackPositionTracker {
 
   /** Listener for position tracker events. */
@@ -246,10 +238,7 @@ import java.lang.reflect.Method;
     outputSampleRate = audioTrack.getSampleRate();
     needsPassthroughWorkarounds = isPassthrough && needsPassthroughWorkarounds(outputEncoding);
     isOutputPcm = Util.isEncodingLinearPcm(outputEncoding);
-    bufferSizeUs =
-        isOutputPcm
-            ? sampleCountToDurationUs(bufferSize / outputPcmFrameSize, outputSampleRate)
-            : C.TIME_UNSET;
+    bufferSizeUs = isOutputPcm ? framesToDurationUs(bufferSize / outputPcmFrameSize) : C.TIME_UNSET;
     rawPlaybackHeadPosition = 0;
     rawPlaybackHeadWrapCount = 0;
     passthroughWorkaroundPauseOffset = 0;
@@ -285,7 +274,7 @@ import java.lang.reflect.Method;
     if (useGetTimestampMode) {
       // Calculate the speed-adjusted position using the timestamp (which may be in the future).
       long timestampPositionFrames = audioTimestampPoller.getTimestampPositionFrames();
-      long timestampPositionUs = sampleCountToDurationUs(timestampPositionFrames, outputSampleRate);
+      long timestampPositionUs = framesToDurationUs(timestampPositionFrames);
       long elapsedSinceTimestampUs = systemTimeUs - audioTimestampPoller.getTimestampSystemTimeUs();
       elapsedSinceTimestampUs =
           Util.getMediaDurationForPlayoutDuration(elapsedSinceTimestampUs, audioTrackPlaybackSpeed);
@@ -431,9 +420,7 @@ import java.lang.reflect.Method;
    * @return Whether the audio track has any pending data to play out.
    */
   public boolean hasPendingData(long writtenFrames) {
-    long currentPositionUs = getCurrentPositionUs(/* sourceEnded= */ false);
-    return writtenFrames > durationUsToSampleCount(currentPositionUs, outputSampleRate)
-        || forceHasPendingData();
+    return writtenFrames > getPlaybackHeadPosition() || forceHasPendingData();
   }
 
   /**
@@ -503,18 +490,23 @@ import java.lang.reflect.Method;
     }
 
     // Check the timestamp and accept/reject it.
-    long timestampSystemTimeUs = audioTimestampPoller.getTimestampSystemTimeUs();
-    long timestampPositionFrames = audioTimestampPoller.getTimestampPositionFrames();
+    long audioTimestampSystemTimeUs = audioTimestampPoller.getTimestampSystemTimeUs();
+    long audioTimestampPositionFrames = audioTimestampPoller.getTimestampPositionFrames();
     long playbackPositionUs = getPlaybackHeadPositionUs();
-    if (Math.abs(timestampSystemTimeUs - systemTimeUs) > MAX_AUDIO_TIMESTAMP_OFFSET_US) {
+    if (Math.abs(audioTimestampSystemTimeUs - systemTimeUs) > MAX_AUDIO_TIMESTAMP_OFFSET_US) {
       listener.onSystemTimeUsMismatch(
-          timestampPositionFrames, timestampSystemTimeUs, systemTimeUs, playbackPositionUs);
+          audioTimestampPositionFrames,
+          audioTimestampSystemTimeUs,
+          systemTimeUs,
+          playbackPositionUs);
       audioTimestampPoller.rejectTimestamp();
-    } else if (Math.abs(
-            sampleCountToDurationUs(timestampPositionFrames, outputSampleRate) - playbackPositionUs)
+    } else if (Math.abs(framesToDurationUs(audioTimestampPositionFrames) - playbackPositionUs)
         > MAX_AUDIO_TIMESTAMP_OFFSET_US) {
       listener.onPositionFramesMismatch(
-          timestampPositionFrames, timestampSystemTimeUs, systemTimeUs, playbackPositionUs);
+          audioTimestampPositionFrames,
+          audioTimestampSystemTimeUs,
+          systemTimeUs,
+          playbackPositionUs);
       audioTimestampPoller.rejectTimestamp();
     } else {
       audioTimestampPoller.acceptTimestamp();
@@ -544,6 +536,10 @@ import java.lang.reflect.Method;
       }
       lastLatencySampleTimeUs = systemTimeUs;
     }
+  }
+
+  private long framesToDurationUs(long frameCount) {
+    return (frameCount * C.MICROS_PER_SECOND) / outputSampleRate;
   }
 
   private void resetSyncParams() {
@@ -577,7 +573,7 @@ import java.lang.reflect.Method;
   }
 
   private long getPlaybackHeadPositionUs() {
-    return sampleCountToDurationUs(getPlaybackHeadPosition(), outputSampleRate);
+    return framesToDurationUs(getPlaybackHeadPosition());
   }
 
   /**
@@ -595,7 +591,7 @@ import java.lang.reflect.Method;
       long elapsedTimeSinceStopUs = (currentTimeMs * 1000) - stopTimestampUs;
       long mediaTimeSinceStopUs =
           Util.getMediaDurationForPlayoutDuration(elapsedTimeSinceStopUs, audioTrackPlaybackSpeed);
-      long framesSinceStop = durationUsToSampleCount(mediaTimeSinceStopUs, outputSampleRate);
+      long framesSinceStop = (mediaTimeSinceStopUs * outputSampleRate) / C.MICROS_PER_SECOND;
       return min(endPlaybackHeadPosition, stopPlaybackHeadPosition + framesSinceStop);
     }
     if (currentTimeMs - lastRawPlaybackHeadPositionSampleTimeMs

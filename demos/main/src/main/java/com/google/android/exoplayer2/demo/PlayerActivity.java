@@ -49,7 +49,6 @@ import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.ads.AdsLoader;
 import com.google.android.exoplayer2.trackselection.TrackSelectionParameters;
 import com.google.android.exoplayer2.ui.StyledPlayerView;
-import com.google.android.exoplayer2.upstream.CmcdConfiguration;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.util.DebugTextViewHelper;
 import com.google.android.exoplayer2.util.ErrorMessageProvider;
@@ -60,15 +59,7 @@ import java.util.Collections;
 import java.util.List;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
-/**
- * An activity that plays media using {@link ExoPlayer}.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** An activity that plays media using {@link ExoPlayer}. */
 public class PlayerActivity extends AppCompatActivity
     implements OnClickListener, StyledPlayerView.ControllerVisibilityListener {
 
@@ -321,7 +312,6 @@ public class PlayerActivity extends AppCompatActivity
             new DefaultMediaSourceFactory(/* context= */ this)
                 .setDataSourceFactory(dataSourceFactory));
     return new DefaultMediaSourceFactory(/* context= */ this)
-        .setCmcdConfigurationFactory(CmcdConfiguration.Factory.DEFAULT)
         .setDataSourceFactory(dataSourceFactory)
         .setDrmSessionManagerProvider(drmSessionManagerProvider)
         .setLocalAdInsertionComponents(

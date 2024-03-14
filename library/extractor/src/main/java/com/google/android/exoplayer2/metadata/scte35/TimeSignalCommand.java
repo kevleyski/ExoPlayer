@@ -20,15 +20,7 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.TimestampAdjuster;
 
-/**
- * Represents a time signal command as defined in SCTE35, Section 9.3.4.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Represents a time signal command as defined in SCTE35, Section 9.3.4. */
 public final class TimeSignalCommand extends SpliceCommand {
 
   /** A PTS value, as defined in SCTE35, Section 9.3.4. */
@@ -67,15 +59,6 @@ public final class TimeSignalCommand extends SpliceCommand {
       ptsTime &= 0x1FFFFFFFFL;
     }
     return ptsTime;
-  }
-
-  @Override
-  public String toString() {
-    return "SCTE-35 TimeSignalCommand { ptsTime="
-        + ptsTime
-        + ", playbackPositionUs= "
-        + playbackPositionUs
-        + " }";
   }
 
   // Parcelable implementation.

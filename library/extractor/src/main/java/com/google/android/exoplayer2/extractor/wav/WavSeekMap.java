@@ -20,7 +20,6 @@ import com.google.android.exoplayer2.extractor.SeekMap;
 import com.google.android.exoplayer2.extractor.SeekPoint;
 import com.google.android.exoplayer2.util.Util;
 
-@Deprecated
 /* package */ final class WavSeekMap implements SeekMap {
 
   private final WavFormat wavFormat;

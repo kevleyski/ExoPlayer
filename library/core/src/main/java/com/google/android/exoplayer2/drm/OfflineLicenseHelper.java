@@ -32,19 +32,12 @@ import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.common.util.concurrent.SettableFuture;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 
-/**
- * Helper class to download, renew and release offline licenses.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
+/** Helper class to download, renew and release offline licenses. */
 @RequiresApi(18)
-@Deprecated
 public final class OfflineLicenseHelper {
 
   private static final Format FORMAT_WITH_EMPTY_DRM_INIT_DATA =
@@ -129,6 +122,25 @@ public final class OfflineLicenseHelper {
             .build(
                 new HttpMediaDrmCallback(
                     defaultLicenseUrl, forceDefaultLicenseUrl, dataSourceFactory)),
+        eventDispatcher);
+  }
+
+  /**
+   * @deprecated Use {@link #OfflineLicenseHelper(DefaultDrmSessionManager,
+   *     DrmSessionEventListener.EventDispatcher)} instead.
+   */
+  @Deprecated
+  public OfflineLicenseHelper(
+      UUID uuid,
+      ExoMediaDrm.Provider mediaDrmProvider,
+      MediaDrmCallback callback,
+      @Nullable Map<String, String> optionalKeyRequestParameters,
+      DrmSessionEventListener.EventDispatcher eventDispatcher) {
+    this(
+        new DefaultDrmSessionManager.Builder()
+            .setUuidAndExoMediaDrmProvider(uuid, mediaDrmProvider)
+            .setKeyRequestParameters(optionalKeyRequestParameters)
+            .build(callback),
         eventDispatcher);
   }
 
@@ -361,25 +373,27 @@ public final class OfflineLicenseHelper {
     // (drmSession.state == STATE_ERROR).
     drmListenerConditionVariable.block();
 
-    SettableFuture<@NullableType DrmSessionException> drmSessionError = SettableFuture.create();
+    SettableFuture<@NullableType DrmSessionException> drmSessionErrorFuture =
+        SettableFuture.create();
     handler.post(
         () -> {
           try {
-            DrmSessionException error = drmSession.getError();
+            DrmSessionException drmSessionError = drmSession.getError();
             if (drmSession.getState() == DrmSession.STATE_ERROR) {
               drmSession.release(eventDispatcher);
               drmSessionManager.release();
             }
-            drmSessionError.set(error);
+            drmSessionErrorFuture.set(drmSessionError);
           } catch (Throwable e) {
-            drmSessionError.setException(e);
+            drmSessionErrorFuture.setException(e);
             drmSession.release(eventDispatcher);
             drmSessionManager.release();
           }
         });
     try {
-      if (drmSessionError.get() != null) {
-        throw drmSessionError.get();
+      DrmSessionException drmSessionError = drmSessionErrorFuture.get();
+      if (drmSessionError != null) {
+        throw drmSessionError;
       } else {
         return drmSession;
       }

@@ -45,15 +45,7 @@ import java.lang.annotation.Target;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
-/**
- * Extracts data from AAC bit streams with ADTS framing.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Extracts data from AAC bit streams with ADTS framing. */
 public final class AdtsExtractor implements Extractor {
 
   /** Factory for {@link AdtsExtractor} instances. */
@@ -138,7 +130,7 @@ public final class AdtsExtractor implements Extractor {
     reader = new AdtsReader(true);
     packetBuffer = new ParsableByteArray(MAX_PACKET_SIZE);
     averageFrameSize = C.LENGTH_UNSET;
-    firstFramePosition = C.INDEX_UNSET;
+    firstFramePosition = C.POSITION_UNSET;
     // Allocate scratch space for an ID3 header. The same buffer is also used to read 4 byte values.
     scratch = new ParsableByteArray(ID3_HEADER_LENGTH);
     scratchBits = new ParsableBitArray(scratch.getData());
@@ -264,7 +256,7 @@ public final class AdtsExtractor implements Extractor {
     }
     input.resetPeekPosition();
     input.advancePeekPosition(firstFramePosition);
-    if (this.firstFramePosition == C.INDEX_UNSET) {
+    if (this.firstFramePosition == C.POSITION_UNSET) {
       this.firstFramePosition = firstFramePosition;
     }
     return firstFramePosition;

@@ -72,15 +72,7 @@ import java.util.Map;
 import javax.net.SocketFactory;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
-/**
- * The RTSP client.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** The RTSP client. */
 /* package */ final class RtspClient implements Closeable {
 
   /**
@@ -238,10 +230,6 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     messageSender.sendPlayRequest(uri, offsetMs, checkNotNull(sessionId));
   }
 
-  public void signalPlaybackEnded() {
-    rtspState = RTSP_STATE_READY;
-  }
-
   /**
    * Seeks to a specific time using RTSP.
    *
@@ -345,22 +333,19 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   }
 
   /**
-   * Returns the included {@link RtspMediaTrack RtspMediaTracks} from parsing the {@link
-   * SessionDescription} within the {@link RtspDescribeResponse}.
+   * Gets the included {@link RtspMediaTrack RtspMediaTracks} from a {@link SessionDescription}.
    *
-   * @param rtspDescribeResponse The {@link RtspDescribeResponse} from which to retrieve the tracks.
+   * @param sessionDescription The {@link SessionDescription}.
    * @param uri The RTSP playback URI.
    */
   private static ImmutableList<RtspMediaTrack> buildTrackList(
-      RtspDescribeResponse rtspDescribeResponse, Uri uri) {
+      SessionDescription sessionDescription, Uri uri) {
     ImmutableList.Builder<RtspMediaTrack> trackListBuilder = new ImmutableList.Builder<>();
-    for (int i = 0; i < rtspDescribeResponse.sessionDescription.mediaDescriptionList.size(); i++) {
-      MediaDescription mediaDescription =
-          rtspDescribeResponse.sessionDescription.mediaDescriptionList.get(i);
+    for (int i = 0; i < sessionDescription.mediaDescriptionList.size(); i++) {
+      MediaDescription mediaDescription = sessionDescription.mediaDescriptionList.get(i);
       // Includes tracks with supported formats only.
       if (RtpPayloadFormat.isFormatSupported(mediaDescription)) {
-        trackListBuilder.add(
-            new RtspMediaTrack(rtspDescribeResponse.headers, mediaDescription, uri));
+        trackListBuilder.add(new RtspMediaTrack(mediaDescription, uri));
       }
     }
     return trackListBuilder.build();
@@ -629,9 +614,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
           case METHOD_DESCRIBE:
             onDescribeResponseReceived(
                 new RtspDescribeResponse(
-                    response.headers,
-                    response.status,
-                    SessionDescriptionParser.parse(response.messageBody)));
+                    response.status, SessionDescriptionParser.parse(response.messageBody)));
             break;
 
           case METHOD_SETUP:
@@ -721,7 +704,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
         }
       }
 
-      ImmutableList<RtspMediaTrack> tracks = buildTrackList(response, uri);
+      ImmutableList<RtspMediaTrack> tracks = buildTrackList(response.sessionDescription, uri);
       if (tracks.isEmpty()) {
         sessionInfoListener.onSessionTimelineRequestFailed("No playable track.", /* cause= */ null);
         return;
@@ -740,7 +723,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     }
 
     private void onPlayResponseReceived(RtspPlayResponse response) {
-      checkState(rtspState == RTSP_STATE_READY || rtspState == RTSP_STATE_PLAYING);
+      checkState(rtspState == RTSP_STATE_READY);
 
       rtspState = RTSP_STATE_PLAYING;
       if (keepAliveMonitor == null) {

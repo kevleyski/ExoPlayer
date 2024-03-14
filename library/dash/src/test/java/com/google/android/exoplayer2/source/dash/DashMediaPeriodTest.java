@@ -80,14 +80,13 @@ public final class DashMediaPeriodTest {
     TrackGroupArray expectedTrackGroups =
         new TrackGroupArray(
             new TrackGroup(
-                /* id= */ "3000000000",
+                /* id= */ "0",
                 adaptationSets.get(0).representations.get(0).format,
                 adaptationSets.get(0).representations.get(1).format,
                 adaptationSets.get(2).representations.get(0).format,
                 adaptationSets.get(2).representations.get(1).format,
                 adaptationSets.get(3).representations.get(0).format),
-            new TrackGroup(
-                /* id= */ "3000000003", adaptationSets.get(1).representations.get(0).format));
+            new TrackGroup(/* id= */ "3", adaptationSets.get(1).representations.get(0).format));
 
     MediaPeriodAsserts.assertTrackGroups(dashMediaPeriod, expectedTrackGroups);
   }
@@ -103,12 +102,12 @@ public final class DashMediaPeriodTest {
     TrackGroupArray expectedTrackGroups =
         new TrackGroupArray(
             new TrackGroup(
-                /* id= */ "3000000000",
+                /* id= */ "0",
                 adaptationSets.get(0).representations.get(0).format,
                 adaptationSets.get(0).representations.get(1).format,
                 adaptationSets.get(1).representations.get(0).format),
             new TrackGroup(
-                /* id= */ "3000000002",
+                /* id= */ "2",
                 adaptationSets.get(2).representations.get(0).format,
                 adaptationSets.get(2).representations.get(1).format,
                 adaptationSets.get(3).representations.get(0).format));
@@ -128,7 +127,7 @@ public final class DashMediaPeriodTest {
     TrackGroupArray expectedTrackGroups =
         new TrackGroupArray(
             new TrackGroup(
-                /* id= */ "3000000000",
+                /* id= */ "0",
                 adaptationSets.get(0).representations.get(0).format,
                 adaptationSets.get(0).representations.get(1).format,
                 adaptationSets.get(1).representations.get(0).format,
@@ -212,13 +211,12 @@ public final class DashMediaPeriodTest {
         periodIndex,
         mock(DashChunkSource.Factory.class),
         mock(TransferListener.class),
-        /* cmcdConfiguration= */ null,
         DrmSessionManager.DRM_UNSUPPORTED,
         new DrmSessionEventListener.EventDispatcher()
             .withParameters(/* windowIndex= */ 0, mediaPeriodId),
         mock(LoadErrorHandlingPolicy.class),
         new MediaSourceEventListener.EventDispatcher()
-            .withParameters(/* windowIndex= */ 0, mediaPeriodId),
+            .withParameters(/* windowIndex= */ 0, mediaPeriodId, /* mediaTimeOffsetMs= */ 0),
         /* elapsedRealtimeOffsetMs= */ 0,
         mock(LoaderErrorThrower.class),
         mock(Allocator.class),

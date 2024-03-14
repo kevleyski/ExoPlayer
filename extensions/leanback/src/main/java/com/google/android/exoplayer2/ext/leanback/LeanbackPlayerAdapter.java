@@ -36,15 +36,7 @@ import com.google.android.exoplayer2.util.ErrorMessageProvider;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoSize;
 
-/**
- * Leanback {@code PlayerAdapter} implementation for {@link Player}.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Leanback {@code PlayerAdapter} implementation for {@link Player}. */
 public final class LeanbackPlayerAdapter extends PlayerAdapter implements Runnable {
 
   static {
@@ -127,7 +119,10 @@ public final class LeanbackPlayerAdapter extends PlayerAdapter implements Runnab
 
   @Override
   public boolean isPlaying() {
-    return !Util.shouldShowPlayButton(player);
+    int playbackState = player.getPlaybackState();
+    return playbackState != Player.STATE_IDLE
+        && playbackState != Player.STATE_ENDED
+        && player.getPlayWhenReady();
   }
 
   @Override
@@ -145,7 +140,13 @@ public final class LeanbackPlayerAdapter extends PlayerAdapter implements Runnab
   @SuppressWarnings("nullness:dereference.of.nullable")
   @Override
   public void play() {
-    if (Util.handlePlayButtonAction(player)) {
+    if (player.getPlaybackState() == Player.STATE_IDLE) {
+      player.prepare();
+    } else if (player.getPlaybackState() == Player.STATE_ENDED) {
+      player.seekToDefaultPosition(player.getCurrentMediaItemIndex());
+    }
+    if (player.isCommandAvailable(Player.COMMAND_PLAY_PAUSE)) {
+      player.play();
       getCallback().onPlayStateChanged(this);
     }
   }
@@ -154,7 +155,8 @@ public final class LeanbackPlayerAdapter extends PlayerAdapter implements Runnab
   @SuppressWarnings("nullness:dereference.of.nullable")
   @Override
   public void pause() {
-    if (Util.handlePauseButtonAction(player)) {
+    if (player.isCommandAvailable(Player.COMMAND_PLAY_PAUSE)) {
+      player.pause();
       getCallback().onPlayStateChanged(this);
     }
   }

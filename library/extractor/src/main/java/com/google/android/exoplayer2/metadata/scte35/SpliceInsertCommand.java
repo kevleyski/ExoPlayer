@@ -24,15 +24,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * Represents a splice insert command defined in SCTE35, Section 9.3.3.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Represents a splice insert command defined in SCTE35, Section 9.3.3. */
 public final class SpliceInsertCommand extends SpliceCommand {
 
   /** The splice event id. */
@@ -223,15 +215,6 @@ public final class SpliceInsertCommand extends SpliceCommand {
     public static ComponentSplice createFromParcel(Parcel in) {
       return new ComponentSplice(in.readInt(), in.readLong(), in.readLong());
     }
-  }
-
-  @Override
-  public String toString() {
-    return "SCTE-35 SpliceInsertCommand { programSplicePts="
-        + programSplicePts
-        + ", programSplicePlaybackPositionUs= "
-        + programSplicePlaybackPositionUs
-        + " }";
   }
 
   // Parcelable implementation.

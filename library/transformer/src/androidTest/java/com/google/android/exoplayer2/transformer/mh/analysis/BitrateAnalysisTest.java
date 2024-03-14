@@ -34,7 +34,7 @@ import static com.google.android.exoplayer2.transformer.AndroidTestUtil.MP4_REMO
 import static com.google.android.exoplayer2.transformer.AndroidTestUtil.MP4_REMOTE_3840W_2160H_5_SECOND_HIGHMOTION;
 import static com.google.android.exoplayer2.transformer.AndroidTestUtil.MP4_REMOTE_640W_480H_31_SECOND_ROOF_SONYXPERIAXZ3;
 import static com.google.android.exoplayer2.transformer.AndroidTestUtil.MP4_REMOTE_7680W_4320H_31_SECOND_ROOF_SAMSUNGS20ULTRA5G;
-import static com.google.android.exoplayer2.transformer.AndroidTestUtil.skipAndLogIfFormatsUnsupported;
+import static com.google.android.exoplayer2.transformer.AndroidTestUtil.skipAndLogIfInsufficientCodecSupport;
 
 import android.content.Context;
 import android.net.Uri;
@@ -42,7 +42,6 @@ import androidx.test.core.app.ApplicationProvider;
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.transformer.AndroidTestUtil;
 import com.google.android.exoplayer2.transformer.DefaultEncoderFactory;
-import com.google.android.exoplayer2.transformer.EditedMediaItem;
 import com.google.android.exoplayer2.transformer.Transformer;
 import com.google.android.exoplayer2.transformer.TransformerAndroidTestRunner;
 import com.google.android.exoplayer2.transformer.VideoEncoderSettings;
@@ -55,7 +54,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -64,9 +62,6 @@ import org.junit.runners.Parameterized.Parameters;
 
 /** Instrumentation tests for analysing output bitrate and quality for a given input bitrate. */
 @RunWith(Parameterized.class)
-@Ignore(
-    "Analysis tests are not used for confirming Transformer is running properly, and not configured"
-        + " for this use as they're missing skip checks for unsupported devices.")
 public class BitrateAnalysisTest {
   private static final ImmutableList<String> INPUT_FILES =
       ImmutableList.of(
@@ -134,11 +129,11 @@ public class BitrateAnalysisTest {
     }
 
     Context context = ApplicationProvider.getApplicationContext();
-    if (skipAndLogIfFormatsUnsupported(
+    if (skipAndLogIfInsufficientCodecSupport(
         context,
         testId,
-        /* inputFormat= */ AndroidTestUtil.getFormatForTestFile(fileUri),
-        /* outputFormat= */ AndroidTestUtil.getFormatForTestFile(fileUri)
+        /* decodingFormat= */ AndroidTestUtil.getFormatForTestFile(fileUri),
+        /* encodingFormat= */ AndroidTestUtil.getFormatForTestFile(fileUri)
             .buildUpon()
             .setAverageBitrate(bitrate)
             .build())) {
@@ -147,6 +142,7 @@ public class BitrateAnalysisTest {
 
     Transformer transformer =
         new Transformer.Builder(context)
+            .setRemoveAudio(true)
             .setEncoderFactory(
                 new AndroidTestUtil.ForceEncodeEncoderFactory(
                     /* wrappedEncoderFactory= */ new DefaultEncoderFactory.Builder(context)
@@ -158,15 +154,11 @@ public class BitrateAnalysisTest {
                         .setEnableFallback(false)
                         .build()))
             .build();
-    EditedMediaItem editedMediaItem =
-        new EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(fileUri)))
-            .setRemoveAudio(true)
-            .build();
 
     new TransformerAndroidTestRunner.Builder(context, transformer)
         .setInputValues(inputValues)
         .setRequestCalculateSsim(true)
         .build()
-        .run(testId, editedMediaItem);
+        .run(testId, MediaItem.fromUri(Uri.parse(fileUri)));
   }
 }

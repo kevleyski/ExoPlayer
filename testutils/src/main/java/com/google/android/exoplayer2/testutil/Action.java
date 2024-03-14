@@ -337,10 +337,12 @@ public abstract class Action {
     }
   }
 
-  /** Calls {@link Player#stop()}. */
+  /** Calls {@link Player#stop()} or {@link Player#stop(boolean)}. */
   public static final class Stop extends Action {
 
     private static final String STOP_ACTION_TAG = "Stop";
+
+    @Nullable private final Boolean reset;
 
     /**
      * Action will call {@link Player#stop()}.
@@ -349,12 +351,28 @@ public abstract class Action {
      */
     public Stop(String tag) {
       super(tag, STOP_ACTION_TAG);
+      this.reset = null;
+    }
+
+    /**
+     * Action will call {@link Player#stop(boolean)}.
+     *
+     * @param tag A tag to use for logging.
+     * @param reset The value to pass to {@link Player#stop(boolean)}.
+     */
+    public Stop(@Size(max = 23) String tag, boolean reset) {
+      super(tag, STOP_ACTION_TAG);
+      this.reset = reset;
     }
 
     @Override
     protected void doActionImpl(
         ExoPlayer player, DefaultTrackSelector trackSelector, @Nullable Surface surface) {
-      player.stop();
+      if (reset == null) {
+        player.stop();
+      } else {
+        player.stop(reset);
+      }
     }
   }
 

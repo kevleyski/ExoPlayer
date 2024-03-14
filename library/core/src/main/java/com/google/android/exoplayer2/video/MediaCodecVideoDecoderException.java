@@ -21,15 +21,7 @@ import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.mediacodec.MediaCodecDecoderException;
 import com.google.android.exoplayer2.mediacodec.MediaCodecInfo;
 
-/**
- * Thrown when a failure occurs in a {@link MediaCodec} video decoder.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Thrown when a failure occurs in a {@link MediaCodec} video decoder. */
 public class MediaCodecVideoDecoderException extends MediaCodecDecoderException {
 
   /** The {@link System#identityHashCode(Object)} of the surface when the exception occurred. */

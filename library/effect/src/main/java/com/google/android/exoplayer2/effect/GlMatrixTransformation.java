@@ -17,12 +17,12 @@ package com.google.android.exoplayer2.effect;
 
 import android.content.Context;
 import android.opengl.Matrix;
-import com.google.android.exoplayer2.util.Size;
-import com.google.android.exoplayer2.util.VideoFrameProcessingException;
+import android.util.Pair;
+import com.google.android.exoplayer2.util.FrameProcessingException;
 import com.google.common.collect.ImmutableList;
 
 /**
- * Specifies a 4x4 transformation {@link Matrix} to apply in the vertex shader for each input frame.
+ * Specifies a 4x4 transformation {@link Matrix} to apply in the vertex shader for each frame.
  *
  * <p>The matrix is applied to points given in normalized device coordinates (-1 to 1 on x, y, and z
  * axes). Transformed pixels that are moved outside of the normal device coordinate range are
@@ -30,13 +30,7 @@ import com.google.common.collect.ImmutableList;
  *
  * <p>Output frame pixels outside of the transformed input frame will be black, with alpha = 0 if
  * applicable.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 public interface GlMatrixTransformation extends GlEffect {
   /**
    * Configures the input and output dimensions.
@@ -47,8 +41,8 @@ public interface GlMatrixTransformation extends GlEffect {
    * @param inputHeight The input frame height, in pixels.
    * @return The output frame width and height, in pixels.
    */
-  default Size configure(int inputWidth, int inputHeight) {
-    return new Size(inputWidth, inputHeight);
+  default Pair<Integer, Integer> configure(int inputWidth, int inputHeight) {
+    return Pair.create(inputWidth, inputHeight);
   }
 
   /**
@@ -57,9 +51,9 @@ public interface GlMatrixTransformation extends GlEffect {
   float[] getGlMatrixArray(long presentationTimeUs);
 
   @Override
-  default SingleFrameGlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
-      throws VideoFrameProcessingException {
-    return DefaultShaderProgram.create(
+  default SingleFrameGlTextureProcessor toGlTextureProcessor(Context context, boolean useHdr)
+      throws FrameProcessingException {
+    return MatrixTextureProcessor.create(
         context,
         /* matrixTransformations= */ ImmutableList.of(this),
         /* rgbMatrices= */ ImmutableList.of(),

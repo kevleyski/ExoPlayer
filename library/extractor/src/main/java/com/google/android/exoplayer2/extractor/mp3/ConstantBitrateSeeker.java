@@ -21,13 +21,7 @@ import com.google.android.exoplayer2.extractor.ConstantBitrateSeekMap;
 
 /**
  * MP3 seeker that doesn't rely on metadata and seeks assuming the source has a constant bitrate.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
  */
-@Deprecated
 /* package */ final class ConstantBitrateSeeker extends ConstantBitrateSeekMap implements Seeker {
 
   /**
@@ -60,6 +54,6 @@ import com.google.android.exoplayer2.extractor.ConstantBitrateSeekMap;
 
   @Override
   public long getDataEndPosition() {
-    return C.INDEX_UNSET;
+    return C.POSITION_UNSET;
   }
 }

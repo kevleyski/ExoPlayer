@@ -20,6 +20,7 @@ import static com.google.android.exoplayer2.util.Assertions.checkArgument;
 
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.mp4.SlowMotionData;
 import com.google.android.exoplayer2.metadata.mp4.SlowMotionData.Segment;
@@ -32,15 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-/**
- * A {@link SpeedProvider} for slow motion segments.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** A {@link SpeedProvider} for slow motion segments. */
 /* package */ class SegmentSpeedProvider implements SpeedProvider {
 
   /**
@@ -52,11 +45,11 @@ import java.util.TreeMap;
   private final ImmutableSortedMap<Long, Float> speedsByStartTimeUs;
   private final float baseSpeedMultiplier;
 
-  public SegmentSpeedProvider(Metadata metadata) {
-    float captureFrameRate = getCaptureFrameRate(metadata);
+  public SegmentSpeedProvider(Format format) {
+    float captureFrameRate = getCaptureFrameRate(format);
     this.baseSpeedMultiplier =
         captureFrameRate == C.RATE_UNSET ? 1 : captureFrameRate / INPUT_FRAME_RATE;
-    this.speedsByStartTimeUs = buildSpeedByStartTimeUsMap(metadata, baseSpeedMultiplier);
+    this.speedsByStartTimeUs = buildSpeedByStartTimeUsMap(format, baseSpeedMultiplier);
   }
 
   @Override
@@ -74,8 +67,8 @@ import java.util.TreeMap;
   }
 
   private static ImmutableSortedMap<Long, Float> buildSpeedByStartTimeUsMap(
-      Metadata metadata, float baseSpeed) {
-    ImmutableList<Segment> segments = extractSlowMotionSegments(metadata);
+      Format format, float baseSpeed) {
+    List<Segment> segments = extractSlowMotionSegments(format);
 
     if (segments.isEmpty()) {
       return ImmutableSortedMap.of();
@@ -103,7 +96,11 @@ import java.util.TreeMap;
     return ImmutableSortedMap.copyOf(speedsByStartTimeUs);
   }
 
-  private static float getCaptureFrameRate(Metadata metadata) {
+  private static float getCaptureFrameRate(Format format) {
+    @Nullable Metadata metadata = format.metadata;
+    if (metadata == null) {
+      return C.RATE_UNSET;
+    }
     for (int i = 0; i < metadata.length(); i++) {
       Metadata.Entry entry = metadata.get(i);
       if (entry instanceof SmtaMetadataEntry) {
@@ -114,12 +111,15 @@ import java.util.TreeMap;
     return C.RATE_UNSET;
   }
 
-  private static ImmutableList<Segment> extractSlowMotionSegments(Metadata metadata) {
+  private static ImmutableList<Segment> extractSlowMotionSegments(Format format) {
     List<Segment> segments = new ArrayList<>();
-    for (int i = 0; i < metadata.length(); i++) {
-      Metadata.Entry entry = metadata.get(i);
-      if (entry instanceof SlowMotionData) {
-        segments.addAll(((SlowMotionData) entry).segments);
+    @Nullable Metadata metadata = format.metadata;
+    if (metadata != null) {
+      for (int i = 0; i < metadata.length(); i++) {
+        Metadata.Entry entry = metadata.get(i);
+        if (entry instanceof SlowMotionData) {
+          segments.addAll(((SlowMotionData) entry).segments);
+        }
       }
     }
     return ImmutableList.sortedCopyOf(BY_START_THEN_END_THEN_DIVISOR, segments);

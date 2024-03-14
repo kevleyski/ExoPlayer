@@ -33,16 +33,8 @@ import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
-/**
- * StreamReader abstract class.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
+/** StreamReader abstract class. */
 @SuppressWarnings("UngroupedOverloads")
-@Deprecated
 /* package */ abstract class StreamReader {
 
   private static final int STATE_READ_HEADERS = 0;

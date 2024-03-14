@@ -17,15 +17,7 @@ package com.google.android.exoplayer2.extractor;
 
 import androidx.annotation.Nullable;
 
-/**
- * Defines a seek point in a media stream.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** Defines a seek point in a media stream. */
 public final class SeekPoint {
 
   /** A {@link SeekPoint} whose time and byte offset are both set to 0. */

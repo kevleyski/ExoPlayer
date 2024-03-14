@@ -42,7 +42,6 @@ import com.google.android.exoplayer2.source.hls.playlist.HlsMultivariantPlaylist
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistTracker;
 import com.google.android.exoplayer2.trackselection.ExoTrackSelection;
 import com.google.android.exoplayer2.upstream.Allocator;
-import com.google.android.exoplayer2.upstream.CmcdConfiguration;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.upstream.TransferListener;
@@ -61,22 +60,13 @@ import java.util.Map;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
-/**
- * A {@link MediaPeriod} that loads an HLS stream.
- *
- * @deprecated com.google.android.exoplayer2 is deprecated. Please migrate to androidx.media3 (which
- *     contains the same ExoPlayer code). See <a
- *     href="https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide">the
- *     migration guide</a> for more details, including a script to help with the migration.
- */
-@Deprecated
+/** A {@link MediaPeriod} that loads an HLS stream. */
 public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.PlaylistEventListener {
 
   private final HlsExtractorFactory extractorFactory;
   private final HlsPlaylistTracker playlistTracker;
   private final HlsDataSourceFactory dataSourceFactory;
   @Nullable private final TransferListener mediaTransferListener;
-  @Nullable private final CmcdConfiguration cmcdConfiguration;
   private final DrmSessionManager drmSessionManager;
   private final DrmSessionEventListener.EventDispatcher drmEventDispatcher;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
@@ -90,7 +80,6 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
   private final boolean useSessionKeys;
   private final PlayerId playerId;
   private final HlsSampleStreamWrapper.Callback sampleStreamWrapperCallback;
-  private final long timestampAdjusterInitializationTimeoutMs;
 
   @Nullable private MediaPeriod.Callback mediaPeriodCallback;
   private int pendingPrepareCount;
@@ -111,7 +100,6 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
    *     and keys.
    * @param mediaTransferListener The transfer listener to inform of any media data transfers. May
    *     be null if no listener is available.
-   * @param cmcdConfiguration The {@link CmcdConfiguration} for the period.
    * @param drmSessionManager The {@link DrmSessionManager} to acquire {@link DrmSession
    *     DrmSessions} with.
    * @param drmEventDispatcher A {@link DrmSessionEventListener.EventDispatcher} used to distribute
@@ -125,16 +113,12 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
    * @param metadataType The type of metadata to extract from the period.
    * @param useSessionKeys Whether to use #EXT-X-SESSION-KEY tags.
    * @param playerId The ID of the current player.
-   * @param timestampAdjusterInitializationTimeoutMs The timeout for the loading thread to wait for
-   *     the timestamp adjuster to initialize, in milliseconds. A timeout of zero is interpreted as
-   *     an infinite timeout.
    */
   public HlsMediaPeriod(
       HlsExtractorFactory extractorFactory,
       HlsPlaylistTracker playlistTracker,
       HlsDataSourceFactory dataSourceFactory,
       @Nullable TransferListener mediaTransferListener,
-      @Nullable CmcdConfiguration cmcdConfiguration,
       DrmSessionManager drmSessionManager,
       DrmSessionEventListener.EventDispatcher drmEventDispatcher,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
@@ -144,13 +128,11 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
       boolean allowChunklessPreparation,
       @HlsMediaSource.MetadataType int metadataType,
       boolean useSessionKeys,
-      PlayerId playerId,
-      long timestampAdjusterInitializationTimeoutMs) {
+      PlayerId playerId) {
     this.extractorFactory = extractorFactory;
     this.playlistTracker = playlistTracker;
     this.dataSourceFactory = dataSourceFactory;
     this.mediaTransferListener = mediaTransferListener;
-    this.cmcdConfiguration = cmcdConfiguration;
     this.drmSessionManager = drmSessionManager;
     this.drmEventDispatcher = drmEventDispatcher;
     this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
@@ -161,7 +143,6 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
     this.metadataType = metadataType;
     this.useSessionKeys = useSessionKeys;
     this.playerId = playerId;
-    this.timestampAdjusterInitializationTimeoutMs = timestampAdjusterInitializationTimeoutMs;
     sampleStreamWrapperCallback = new SampleStreamWrapperCallback();
     compositeSequenceableLoader =
         compositeSequenceableLoaderFactory.createCompositeSequenceableLoader();
@@ -355,7 +336,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
           // The first enabled wrapper is always allowed to initialize timestamp adjusters. Note
           // that the first wrapper will correspond to a variant, or else an audio rendition, or
           // else a text rendition, in that order.
-          sampleStreamWrapper.setIsPrimaryTimestampSource(true);
+          sampleStreamWrapper.setIsTimestampMaster(true);
           if (wasReset
               || enabledSampleStreamWrappers.length == 0
               || sampleStreamWrapper != enabledSampleStreamWrappers[0]) {
@@ -369,7 +350,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
           // audio or video, since they are expected to contain dense samples. Text wrappers are not
           // permitted except in the case above in which no variant or audio rendition wrappers are
           // enabled.
-          sampleStreamWrapper.setIsPrimaryTimestampSource(i < audioVideoSampleStreamWrapperCount);
+          sampleStreamWrapper.setIsTimestampMaster(i < audioVideoSampleStreamWrapperCount);
         }
       }
     }
@@ -543,9 +524,9 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
     this.sampleStreamWrappers = sampleStreamWrappers.toArray(new HlsSampleStreamWrapper[0]);
     this.manifestUrlIndicesPerWrapper = manifestUrlIndicesPerWrapper.toArray(new int[0][]);
     pendingPrepareCount = this.sampleStreamWrappers.length;
-    // Set primary timestamp source and trigger preparation (if not already prepared)
+    // Set timestamp masters and trigger preparation (if not already prepared)
     for (int i = 0; i < audioVideoSampleStreamWrapperCount; i++) {
-      this.sampleStreamWrappers[i].setIsPrimaryTimestampSource(true);
+      this.sampleStreamWrappers[i].setIsTimestampMaster(true);
     }
     for (HlsSampleStreamWrapper sampleStreamWrapper : this.sampleStreamWrappers) {
       sampleStreamWrapper.continuePreparing();
@@ -793,10 +774,8 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsPlaylistTracker.Pla
             dataSourceFactory,
             mediaTransferListener,
             timestampAdjusterProvider,
-            timestampAdjusterInitializationTimeoutMs,
             muxedCaptionFormats,
-            playerId,
-            cmcdConfiguration);
+            playerId);
     return new HlsSampleStreamWrapper(
         uid,
         trackType,

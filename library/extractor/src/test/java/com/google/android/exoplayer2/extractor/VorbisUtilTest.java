@@ -116,8 +116,7 @@ public final class VorbisUtilTest {
       VorbisUtil.verifyVorbisHeaderCapturePattern(0x99, header, false);
       fail();
     } catch (ParserException e) {
-      assertThat(e.getMessage())
-          .isEqualTo("expected header type 99{contentIsMalformed=true, dataType=1}");
+      assertThat(e.getMessage()).isEqualTo("expected header type 99");
     }
   }
 
@@ -137,8 +136,7 @@ public final class VorbisUtilTest {
       VorbisUtil.verifyVorbisHeaderCapturePattern(0x01, header, false);
       fail();
     } catch (ParserException e) {
-      assertThat(e.getMessage())
-          .isEqualTo("expected characters 'vorbis'{contentIsMalformed=true, dataType=1}");
+      assertThat(e.getMessage()).isEqualTo("expected characters 'vorbis'");
     }
   }
 
