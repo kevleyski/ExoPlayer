@@ -312,6 +312,7 @@ public class PlayerActivity extends AppCompatActivity
             new DefaultMediaSourceFactory(/* context= */ this)
                 .setDataSourceFactory(dataSourceFactory));
     return new DefaultMediaSourceFactory(/* context= */ this)
+//        .setCmcdConfigurationFactory(CmcdConfiguration.Factory.DEFAULT)
         .setDataSourceFactory(dataSourceFactory)
         .setDrmSessionManagerProvider(drmSessionManagerProvider)
         .setLocalAdInsertionComponents(
