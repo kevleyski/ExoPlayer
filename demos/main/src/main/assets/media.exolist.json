@@ -4,7 +4,7 @@
     "samples": [
       {
         "name": "Kevs DASH local",
-        "uri": "http://localhost/manifest.mpd"
+        "uri": "http://172.20.10.233/manifest.mpd"
       },
       {
         "name": "HD (MP4, H264)",

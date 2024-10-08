@@ -2,5 +2,7 @@
 <network-security-config>
   <domain-config cleartextTrafficPermitted="true">
     <domain includeSubdomains="true">localhost</domain>
+    <domain includeSubdomains="true">172.20.10.233</domain>
+    <domain includeSubdomains="true">ipv4address</domain>
   </domain-config>
 </network-security-config>
