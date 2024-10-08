@@ -3,6 +3,10 @@
     "name": "Clear DASH",
     "samples": [
       {
+        "name": "Kevs DASH local",
+        "uri": "http://localhost/manifest.mpd"
+      },
+      {
         "name": "HD (MP4, H264)",
         "uri": "https://storage.googleapis.com/wvmedia/clear/h264/tears/tears.mpd"
       },
@@ -228,6 +232,10 @@
   {
     "name": "HLS",
     "samples": [
+      {
+        "name": "Kevs VOD2Live 1",
+        "uri": "https://vod2live-ss-stg-us-west-1.streamshark.io/vod2live/bejkpbjmu/1210/master.m3u8"
+      },
       {
         "name": "Apple 4x3 basic stream (TS)",
         "uri": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8"

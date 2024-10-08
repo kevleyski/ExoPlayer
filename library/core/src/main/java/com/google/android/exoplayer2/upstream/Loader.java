@@ -406,6 +406,7 @@ public final class Loader implements LoaderErrorThrower {
           shouldLoad = !canceled;
           executorThread = Thread.currentThread();
         }
+        //System.out.println("KJSL: loading " + loadable.dataSpec.uri);
         if (shouldLoad) {
           TraceUtil.beginSection("load:" + loadable.getClass().getSimpleName());
           try {
